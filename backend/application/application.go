@@ -69,6 +69,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/impl/checkpoint"
 	implEventbus "github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
 	"github.com/coze-dev/coze-studio/backend/application/iot"
+	"github.com/coze-dev/coze-studio/backend/application/iotadmin"
 )
 
 type eventbusImpl struct {
@@ -175,6 +176,9 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 		IDGen:   infra.IDGenSVC,
 		Storage: infra.TOSClient,
 	})
+
+	// init iot admin app service (db only)
+	iotadmin.InitService(infra.DB)
 
 	return &basicServices{
 		infra:        infra,

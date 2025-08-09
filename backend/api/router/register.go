@@ -35,8 +35,15 @@ import (
 func GeneratedRegister(r *server.Hertz) {
 	// INSERT_POINT: DO NOT DELETE THIS LINE!
 	coze.Register(r)
+	// custom routers registered here
+	for _, f := range registerers {
+		f(r)
+	}
 	staticFileRegister(r)
 }
+
+// registerers holds custom router registrars to avoid generator overwriting.
+var registerers []func(r *server.Hertz)
 
 // staticFileRegister registers web page router.
 func staticFileRegister(r *server.Hertz) {
