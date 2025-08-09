@@ -57,6 +57,7 @@ const (
 
 	MQTypeKey                = "COZE_MQ_TYPE"
 	MQServer                 = "MQ_NAME_SERVER"
+	MQNSQLookupd             = "MQ_NSQ_LOOKUPD" // e.g. nsqlookupd:4161 (for discovery) or nsqd:4150 if direct
 	RMQSecretKey             = "RMQ_SECRET_KEY"
 	RMQAccessKey             = "RMQ_ACCESS_KEY"
 	RMQTopicApp              = "opencoze_search_app"
@@ -65,6 +66,20 @@ const (
 	RMQConsumeGroupResource  = "cg_search_resource"
 	RMQConsumeGroupApp       = "cg_search_app"
 	RMQConsumeGroupKnowledge = "cg_knowledge"
+
+	// IoT/Voice topics (NSQ/Kafka/RMQ agnostic naming)
+	RMQTopicDeviceInbound  = "opencoze_iot_device_inbound"   // device -> cloud (IoT svc -> coze)
+	RMQTopicDeviceOutbound = "opencoze_iot_device_outbound"  // cloud -> device (coze -> IoT svc)
+	RMQTopicASRTasks       = "opencoze_iot_asr_tasks"        // audio -> text tasks
+	RMQTopicTTSTasks       = "opencoze_iot_tts_tasks"        // text -> audio tasks
+	RMQTopicTTSResults     = "opencoze_iot_tts_results"      // tts results
+	RMQTopicLLMTasks       = "opencoze_iot_llm_tasks"        // text -> coze agent
+	RMQTopicLLMResults     = "opencoze_iot_llm_results"      // coze agent -> text
+
+	RMQConsumeGroupIoT  = "cg_iot"
+	RMQConsumeGroupASR  = "cg_asr"
+	RMQConsumeGroupTTS  = "cg_tts"
+	RMQConsumeGroupLLM  = "cg_llm"
 
 	CozeConnectorID   = int64(10000010)
 	WebSDKConnectorID = int64(999)
