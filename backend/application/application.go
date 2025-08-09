@@ -19,6 +19,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/coze-dev/coze-studio/backend/application/openauth"
 	"github.com/coze-dev/coze-studio/backend/application/template"
@@ -67,6 +68,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/contract/eventbus"
 	"github.com/coze-dev/coze-studio/backend/infra/impl/checkpoint"
 	implEventbus "github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
+	"github.com/coze-dev/coze-studio/backend/application/iot"
 )
 
 type eventbusImpl struct {
@@ -140,6 +142,13 @@ func Init(ctx context.Context) (err error) {
 	crossuser.SetDefaultSVC(crossuserImpl.InitDomainService(basicServices.userSVC.DomainSVC))
 	crossdatacopy.SetDefaultSVC(dataCopyImpl.InitDomainService(basicServices.infra))
 	crosssearch.SetDefaultSVC(searchImpl.InitDomainService(complexServices.searchSVC.DomainSVC))
+
+	// Optional: initialize IoT/Voice bus if enabled
+	if os.Getenv("ENABLE_IOT_VOICE") == "1" {
+		if _, err := iot.Init(ctx); err != nil {
+			return fmt.Errorf("Init - iot.Init failed, err: %v", err)
+		}
+	}
 
 	return nil
 }
