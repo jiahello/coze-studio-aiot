@@ -11,6 +11,7 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/conversation/run"
 	convApp "github.com/coze-dev/coze-studio/backend/application/conversation"
+	admin "github.com/coze-dev/coze-studio/backend/application/iotadmin"
 	convMsg "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
 	agentrunEntity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 
@@ -84,15 +85,26 @@ func (s *Service) HandleMessage(ctx context.Context, m *contract.Message) error 
 		// Consume llm.tasks: call agent and produce llm.results
 		return s.handleLLMTask(ctx, &env)
 	case "llm.result":
-		// Forward to TTS tasks when final text arrives
+		// Forward to TTS tasks when final text arrives; resolve TTS config
+		final := false
+		text := ""
 		if r, ok := env.Payload.(map[string]any); ok {
-			if final, _ := r["final"].(bool); final {
-				// convert to tts.request
-				text, _ := r["text"].(string)
-				env.Type = "tts.request"
-				env.Payload = msg.TTSRequest{Text: text}
-				return s.forward(ctx, s.ttsTasksP, &env)
+			final, _ = r["final"].(bool)
+			if t, ok2 := r["text"].(string); ok2 { text = t }
+		} else {
+			// try strict unmarshal
+			b, _ := json.Marshal(env.Payload)
+			var lr msg.LLMTxtResult
+			if err := json.Unmarshal(b, &lr); err == nil {
+				final = lr.Final
+				text = lr.Text
 			}
+		}
+		if final {
+			provider, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+			env.Type = "tts.request"
+			env.Payload = msg.TTSRequest{Text: text, Provider: provider, Model: model, Voice: voice}
+			return s.forward(ctx, s.ttsTasksP, &env)
 		}
 		return nil
 	case "tts.result":
@@ -111,6 +123,28 @@ func (s *Service) HandleMessage(ctx context.Context, m *contract.Message) error 
 func (s *Service) forward(ctx context.Context, p contract.Producer, env *msg.Envelope) error {
 	b, _ := json.Marshal(env)
 	return p.Send(ctx, b)
+}
+
+// resolveTTSConfig returns provider/model/voice using priority: hardware -> app -> default
+func resolveTTSConfig(deviceID, appID, spaceID string) (string, string, string) {
+	// defaults
+	dProv, dModel, dVoice := "doubao", "speech-1", "doubao-default"
+	if admin.SVC == nil || admin.SVC.DB == nil {
+		return dProv, dModel, dVoice
+	}
+	// hardware level
+	var h admin.HardwareTTSSettings
+	if err := admin.SVC.DB.Where("device_id = ?", deviceID).First(&h).Error; err == nil {
+		return h.Provider, h.Model, h.Voice
+	}
+	// app level
+	if appID != "" {
+		var a admin.AppTTSSettings
+		if err := admin.SVC.DB.Where("app_id = ?", appID).First(&a).Error; err == nil {
+			return a.Provider, a.Model, a.Voice
+		}
+	}
+	return dProv, dModel, dVoice
 }
 
 func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
