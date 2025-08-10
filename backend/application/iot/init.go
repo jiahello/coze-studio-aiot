@@ -3,7 +3,9 @@ package iot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -148,12 +150,31 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 		Version:          "",
 		Ext:              nil,
 	}
-	if _, err := convApp.ConversationSVC.AgentRunDomainSVC.AgentRun(ctx, arm); err != nil {
+	stream, err := convApp.ConversationSVC.AgentRunDomainSVC.AgentRun(ctx, arm)
+	if err != nil {
 		logs.Errorf("[iot] AgentRun failed: %v", err)
 		return nil
 	}
-	// TODO: read stream and capture final text; temporarily return first chunk text
-	finalText := text
+	finalText := ""
+	for {
+		chunk, recvErr := stream.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			logs.Errorf("[iot] AgentRun stream recv error: %v", recvErr)
+			break
+		}
+		if chunk != nil && chunk.ChunkMessageItem != nil {
+			if chunk.ChunkMessageItem.MessageType == convMsg.MessageTypeAnswer {
+				// capture the latest assistant answer content
+				finalText = chunk.ChunkMessageItem.Content
+			}
+		}
+	}
+	if finalText == "" {
+		finalText = text
+	}
 
 	res := &msg.Envelope{
 		MessageID: env.MessageID,
