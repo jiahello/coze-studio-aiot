@@ -55,6 +55,10 @@ func Init(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init llm tasks producer failed: %w", err)
 	}
+	svc.llmResultsP, err = eventbus.NewProducer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, 1)
+	if err != nil {
+		return nil, fmt.Errorf("init llm results producer failed: %w", err)
+	}
 	svc.ttsTasksP, err = eventbus.NewProducer(nameServer, consts.RMQTopicTTSTasks, consts.RMQConsumeGroupTTS, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init tts tasks producer failed: %w", err)
@@ -67,6 +71,7 @@ func Init(ctx context.Context) (*Service, error) {
 type Service struct {
 	deviceOutboundP contract.Producer
 	llmTasksP       contract.Producer
+	llmResultsP     contract.Producer
 	ttsTasksP       contract.Producer
 }
 
@@ -190,6 +195,7 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 		return nil
 	}
 	finalText := ""
+	var seq int64 = 1
 	for {
 		chunk, recvErr := stream.Recv()
 		if recvErr != nil {
@@ -202,7 +208,30 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 		if chunk != nil && chunk.ChunkMessageItem != nil {
 			if chunk.ChunkMessageItem.MessageType == convMsg.MessageTypeAnswer {
 				// capture the latest assistant answer content
-				finalText = chunk.ChunkMessageItem.Content
+				piece := chunk.ChunkMessageItem.Content
+				if piece != "" {
+					finalText += piece
+					// emit streaming llm.result chunk
+					envChunk := &msg.Envelope{
+						MessageID: env.MessageID,
+						Type:      "llm.result",
+						DeviceID:  env.DeviceID,
+						SpaceID:   env.SpaceID,
+						AppID:     env.AppID,
+						TS:        time.Now().UnixMilli(),
+						Streaming: true,
+						Seq:       seq,
+						Payload:   msg.LLMTxtResult{Text: piece, Final: false},
+					}
+					_ = s.forward(ctx, s.llmResultsP, envChunk)
+					// also forward to TTS as streaming request
+					prov, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+					envTTS := *envChunk
+					envTTS.Type = "tts.request"
+					envTTS.Payload = msg.TTSRequest{Text: piece, Provider: prov, Model: model, Voice: voice}
+					_ = s.forward(ctx, s.ttsTasksP, &envTTS)
+					seq++
+				}
 			}
 		}
 	}
@@ -219,7 +248,7 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 		TS:        time.Now().UnixMilli(),
 		Payload:   msg.LLMTxtResult{Text: finalText, Final: true},
 	}
-	return s.forward(ctx, s.llmTasksP, res)
+	return s.forward(ctx, s.llmResultsP, res)
 }
 
 // withSyntheticAPIAuth creates minimal context that satisfies openapi agent run requirements.
