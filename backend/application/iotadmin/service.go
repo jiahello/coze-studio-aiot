@@ -136,3 +136,44 @@ func (s *ApplicationService) UpsertHardwareTTS(ctx context.Context, cfg *Hardwar
 	}
 	return err
 }
+
+// GetEffectiveDeviceTTS returns the effective provider/model/voice and source priority: device > app > default.
+type EffectiveTTS struct {
+	Provider string
+	Model    string
+	Voice    string
+	Source   string // device|app|default
+}
+
+func (s *ApplicationService) GetEffectiveDeviceTTS(ctx context.Context, deviceID string, appID *uint64) (*EffectiveTTS, error) {
+	// device level
+	var h HardwareTTSSettings
+	if err := s.DB.WithContext(ctx).Where("device_id = ? AND is_deleted = 0", deviceID).First(&h).Error; err == nil {
+		return &EffectiveTTS{Provider: h.Provider, Model: h.Model, Voice: h.Voice, Source: "device"}, nil
+	}
+	// app level
+	if appID != nil {
+		var a AppTTSSettings
+		if err := s.DB.WithContext(ctx).Where("app_id = ?", *appID).First(&a).Error; err == nil {
+			return &EffectiveTTS{Provider: a.Provider, Model: a.Model, Voice: a.Voice, Source: "app"}, nil
+		}
+	}
+	// default
+	return &EffectiveTTS{Provider: "doubao", Model: "speech-1", Voice: "doubao-standard", Source: "default"}, nil
+}
+
+// GetVoiceSampleURL finds a sample_url for provider+voice (space scoped first, then global)
+func (s *ApplicationService) GetVoiceSampleURL(ctx context.Context, provider, voice string, spaceID *uint64) (string, error) {
+	var v TTSVoice
+	db := s.DB.WithContext(ctx).Model(&TTSVoice{}).Where("provider = ? AND voice_code = ?", provider, voice)
+	if spaceID != nil {
+		db = db.Where("space_id = ? OR space_id IS NULL", *spaceID)
+	}
+	if err := db.Order("space_id IS NULL").First(&v).Error; err != nil {
+		return "", err
+	}
+	if v.SampleURL != nil {
+		return *v.SampleURL, nil
+	}
+	return "", nil
+}

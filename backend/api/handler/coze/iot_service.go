@@ -2,6 +2,7 @@ package coze
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -136,4 +137,44 @@ func UpsertHardwareTTS(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, map[string]any{"ok": true})
+}
+
+// GetEffectiveDeviceTTS
+// @router /api/iot/devices/tts/get [GET]
+func GetEffectiveDeviceTTS(ctx context.Context, c *app.RequestContext) {
+	deviceID := string(c.QueryArgs().Peek("device_id"))
+	appIDStr := string(c.QueryArgs().Peek("app_id"))
+	var appID *uint64
+	if appIDStr != "" {
+		var v uint64
+		_, _ = fmt.Sscan(appIDStr, &v)
+		appID = &v
+	}
+	if deviceID == "" {
+		httputil.BadRequest(c, "device_id required")
+		return
+	}
+	res, err := admin.SVC.GetEffectiveDeviceTTS(ctx, deviceID, appID)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, res)
+}
+
+// TTSPreview
+// @router /api/tts/preview [POST]
+func TTSPreview(ctx context.Context, c *app.RequestContext) {
+	type req struct{ Provider, Model, Voice, Text string; SpaceID *uint64 }
+	var r req
+	if err := c.BindAndValidate(&r); err != nil {
+		httputil.BadRequest(c, err.Error())
+		return
+	}
+	// try get sample url first
+	url, _ := admin.SVC.GetVoiceSampleURL(ctx, r.Provider, r.Voice, r.SpaceID)
+	if url == "" {
+		// fallback: return a signed placeholder or instruct device to synth via NSQ (not implemented here)
+	}
+	c.JSON(consts.StatusOK, map[string]any{"sample_url": url})
 }

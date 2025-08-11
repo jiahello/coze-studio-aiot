@@ -16,9 +16,11 @@ func registerIoTRoutes(r *server.Hertz) {
 	devices.POST("/list", coze.ListHardwareDevices)
 	devices.POST("/upsert", coze.UpsertHardwareDevice)
 	devices.POST("/tts/set", coze.UpsertHardwareTTS)
+	devices.GET("/tts/get", coze.GetEffectiveDeviceTTS)
 
 	tts := api.Group("/tts")
 	tts.POST("/voices/list", coze.ListTTSVoices)
+	tts.POST("/preview", coze.TTSPreview)
 
 	apps := api.Group("/apps")
 	apps.POST("/tts/set", coze.UpsertAppTTS)
