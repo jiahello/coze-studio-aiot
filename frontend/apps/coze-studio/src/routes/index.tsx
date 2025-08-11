@@ -198,6 +198,24 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   }),
                 },
 
+                // AI Hardware Devices
+                {
+                  path: 'hardware',
+                  Component: () => import('../pages/hardware').then(m => m.HardwarePage),
+                  loader: () => ({
+                    subMenuKey: 'HARDWARE',
+                  }),
+                },
+
+                // TTS Voices and App TTS
+                {
+                  path: 'tts',
+                  Component: () => import('../pages/tts').then(m => m.TTSPage),
+                  loader: () => ({
+                    subMenuKey: 'TTS',
+                  }),
+                },
+
                 // database resources
                 {
                   path: 'database',
