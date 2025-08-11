@@ -7,6 +7,10 @@ export const HardwarePage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState<any>({ id: 0, device_id: '', name: '', app_id: null, status: 'online' });
   const [showModal, setShowModal] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
     // try parse space id from url
@@ -27,7 +31,7 @@ export const HardwarePage: React.FC = () => {
     try {
       const resp = await fetch('/api/iot/devices/list', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ space_id: spaceId, page: 1, page_size: 50 })
+        body: JSON.stringify({ space_id: spaceId, page, page_size: pageSize, keyword })
       });
       const data = await resp.json();
       setList(data.list || []);
@@ -49,7 +53,18 @@ export const HardwarePage: React.FC = () => {
     <div className="p-4">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">AI 硬件设备（{total}）</h2>
-        <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={() => { setForm({ id: 0, device_id: '', name: '', app_id: null, status: 'online' }); setShowModal(true); }}>新增设备</button>
+        <div className="flex items-center gap-2">
+          <input className="border p-1" placeholder="搜索设备ID/名称" value={keyword} onChange={e => setKeyword(e.target.value)} />
+          <select className="border p-1" value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="">全部状态</option>
+            <option value="online">online</option>
+            <option value="offline">offline</option>
+            <option value="pairing">pairing</option>
+            <option value="blocked">blocked</option>
+          </select>
+          <button className="px-3 py-1 border rounded" onClick={fetchList}>查询</button>
+          <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={() => { setForm({ id: 0, device_id: '', name: '', app_id: null, status: 'online' }); setShowModal(true); }}>新增设备</button>
+        </div>
       </div>
 
       {loading ? <div>Loading...</div> : (
@@ -71,6 +86,7 @@ export const HardwarePage: React.FC = () => {
                 <td className="p-2">{it.app_id ?? '-'}</td>
                 <td className="p-2">{it.status}</td>
                 <td className="p-2">
+                  <a className="px-2 py-1 text-blue-600" href={`/space/${spaceId}/hardware/${encodeURIComponent(it.device_id)}`}>详情</a>
                   <button className="px-2 py-1 text-blue-600" onClick={() => { setForm({ id: it.id, device_id: it.device_id, name: it.name, app_id: it.app_id, status: it.status, description: it.description }); setShowModal(true); }}>编辑</button>
                 </td>
               </tr>
@@ -78,6 +94,11 @@ export const HardwarePage: React.FC = () => {
           </tbody>
         </table>
       )}
+      <div className="mt-2 flex items-center gap-2 text-sm">
+        <span>第 {page} 页</span>
+        <button className="px-2 py-1 border rounded" disabled={page<=1} onClick={() => { setPage(p => Math.max(1,p-1)); void fetchList(); }}>上一页</button>
+        <button className="px-2 py-1 border rounded" disabled={(page*pageSize)>=total} onClick={() => { setPage(p => p+1); void fetchList(); }}>下一页</button>
+      </div>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center">

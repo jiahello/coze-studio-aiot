@@ -206,6 +206,13 @@ export const router: ReturnType<typeof createBrowserRouter> =
                     subMenuKey: 'HARDWARE',
                   }),
                 },
+                {
+                  path: 'hardware/:device_id',
+                  Component: () => import('../pages/hardware-detail').then(m => m.HardwareDetailPage),
+                  loader: () => ({
+                    subMenuKey: 'HARDWARE',
+                  }),
+                },
 
                 // TTS Voices and App TTS
                 {
