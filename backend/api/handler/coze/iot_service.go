@@ -36,6 +36,9 @@ func ListHardwareDevices(ctx context.Context, c *app.RequestContext) {
 		httputil.BadRequest(c, err.Error())
 		return
 	}
+	if req.SpaceID == 0 { httputil.BadRequest(c, "space_id required"); return }
+	if req.Page <= 0 { req.Page = 1 }
+	if req.PageSize <= 0 || req.PageSize > 200 { req.PageSize = 20 }
 	list, total, err := admin.SVC.ListHardwareDevices(ctx, req.SpaceID, req.Page, req.PageSize, req.Keyword)
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)
@@ -50,6 +53,10 @@ func UpsertHardwareDevice(ctx context.Context, c *app.RequestContext) {
 	var req upsertDeviceReq
 	if err := c.BindAndValidate(&req); err != nil {
 		httputil.BadRequest(c, err.Error())
+		return
+	}
+	if req.SpaceID == 0 || req.DeviceID == "" || req.Name == "" {
+		httputil.BadRequest(c, "space_id, device_id, name are required")
 		return
 	}
 	dev := &admin.HardwareDevice{
@@ -71,6 +78,8 @@ func UpsertHardwareDevice(ctx context.Context, c *app.RequestContext) {
 type listVoicesReq struct {
 	SpaceID *uint64 `json:"space_id"`
 	Provider string `json:"provider"`
+	Language string `json:"language"`
+	Gender   string `json:"gender"`
 	Page    int    `json:"page"`
 	PageSize int   `json:"page_size"`
 }
@@ -83,7 +92,9 @@ func ListTTSVoices(ctx context.Context, c *app.RequestContext) {
 		httputil.BadRequest(c, err.Error())
 		return
 	}
-	list, total, err := admin.SVC.ListTTSVoices(ctx, req.SpaceID, req.Provider, req.Page, req.PageSize)
+	if req.Page <= 0 { req.Page = 1 }
+	if req.PageSize <= 0 || req.PageSize > 200 { req.PageSize = 20 }
+	list, total, err := admin.SVC.ListTTSVoices(ctx, req.SpaceID, req.Provider, req.Language, req.Gender, req.Page, req.PageSize)
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)
 		return

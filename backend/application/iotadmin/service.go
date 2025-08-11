@@ -66,7 +66,7 @@ func (s *ApplicationService) UpsertHardwareDevice(ctx context.Context, d *Hardwa
 }
 
 // ListTTSVoices returns voices for a space (including global voices where space_id is NULL).
-func (s *ApplicationService) ListTTSVoices(ctx context.Context, spaceID *uint64, provider string, page, pageSize int) ([]*TTSVoice, int64, error) {
+func (s *ApplicationService) ListTTSVoices(ctx context.Context, spaceID *uint64, provider, language, gender string, page, pageSize int) ([]*TTSVoice, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -83,6 +83,12 @@ func (s *ApplicationService) ListTTSVoices(ctx context.Context, spaceID *uint64,
 	}
 	if provider != "" {
 		db = db.Where("provider = ?", provider)
+	}
+	if language != "" {
+		db = db.Where("language = ?", language)
+	}
+	if gender != "" {
+		db = db.Where("gender = ?", gender)
 	}
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
