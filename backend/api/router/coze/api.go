@@ -405,6 +405,7 @@ func Register(r *server.Hertz) {
 				_upload1.POST("/auth_token", append(_getworkflowuploadauthtokenMw(), coze.GetWorkflowUploadAuthToken)...)
 			}
 		}
+		// IoT/TTS routes are registered in a manual router file to avoid generator overwriting
 	}
 	{
 		_v1 := root.Group("/v1", _v1Mw()...)
