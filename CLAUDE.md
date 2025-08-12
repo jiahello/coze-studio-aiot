@@ -196,6 +196,13 @@ Before deployment, configure AI models in `backend/conf/model/`:
 - 应用启动挂载：`backend/application/application.go`（受 `ENABLE_IOT_VOICE` 控制）
 - 相关环境常量：`backend/types/consts/consts.go`
 
+### 跨域契约与解耦（新增）
+
+- 跨域契约：`crossdomain/contract/iot` 暴露 `Service` 接口与 `EffectiveTTS`
+- 实现适配：`crossdomain/impl/iot` 基于领域服务实现，避免应用层直接依赖实现
+- 初始化注册：在 `application/iotadmin/init.go` 中用 `crossIOT.SetDefaultSVC(implIOT.NewAdapter(domainSvc))`
+- 业务调用：在 `application/iot/init.go` 通过 `crossdomain` 契约解析 TTS 配置，完全解耦 `iotadmin`
+
 ### REST API（当前可用）
 
 - 设备（Device）

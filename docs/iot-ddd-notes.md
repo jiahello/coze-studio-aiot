@@ -18,6 +18,31 @@
 - API/应用层禁止越层访问 DAL；所有访问通过仓储接口
 - 事件总线/外部系统通过契约获取，避免应用层依赖实现
 
+## 跨域调用与初始化
+- 初始化（在 `backend/application/iotadmin/init.go` 完成）：
+```go
+import (
+    crossIOT "github.com/coze-dev/coze-studio/backend/crossdomain/contract/iot"
+    implIOT "github.com/coze-dev/coze-studio/backend/crossdomain/impl/iot"
+    domainSvc "github.com/coze-dev/coze-studio/backend/domain/iot/service"
+)
+
+// 装配仓储与领域服务
+svc := domainSvc.NewService(deviceRepo, voiceRepo, settingsRepo)
+// 注册跨域默认服务
+crossIOT.SetDefaultSVC(implIOT.NewAdapter(svc))
+```
+- 业务侧调用（如 `backend/application/iot/init.go`）：
+```go
+import crossIOT "github.com/coze-dev/coze-studio/backend/crossdomain/contract/iot"
+
+svc := crossIOT.GetDefaultSVC()
+if svc != nil {
+    eff, _ := svc.GetEffectiveTTS(ctx, deviceID, appIDPtr)
+    // 使用 eff.Provider / eff.Model / eff.Voice
+}
+```
+
 ## 扩展方式
 - 新增规则：在 `service/service.go` 中扩展方法，必要时补充仓储查询接口
 - 新增存储字段：同步更新 `internal/dal/model.go` 与实体字段，映射在 DAO 中补齐
