@@ -1,10 +1,10 @@
-package iot
+package dal
 
 import "time"
 
-// 注意：以下为持久化模型（PO），仅供本目录内部使用
+// PO 模型（仅用于 DAL）
 
- type HardwareDevicePO struct {
+ type HardwareDevice struct {
 	ID              uint64    `gorm:"column:id;primaryKey;autoIncrement"`
 	DeviceID        string    `gorm:"column:device_id;size:64;not null"`
 	Name            string    `gorm:"column:name;size:255;not null"`
@@ -24,9 +24,9 @@ import "time"
 	FromAccountID   *string   `gorm:"column:from_account_id"`
  }
 
- func (HardwareDevicePO) TableName() string { return "hardware_device" }
+ func (HardwareDevice) TableName() string { return "hardware_device" }
 
- type TTSVoicePO struct {
+ type TTSVoice struct {
 	ID             uint64     `gorm:"column:id;primaryKey;autoIncrement"`
 	Provider       string     `gorm:"column:provider;size:255;not null"`
 	Model          *string    `gorm:"column:model;size:255"`
@@ -44,11 +44,11 @@ import "time"
 	SampleURL      *string    `gorm:"column:sample_url;size:512"`
 	CreatedAtMs    uint64     `gorm:"column:created_at;not null"`
 	UpdatedAtMs    uint64     `gorm:"column:updated_at;not null"`
+	DeletedAt      *time.Time `gorm:"column:deleted_at"`
+	IsDeleted      bool       `gorm:"column:is_deleted;not null"`
+	DeletedByID    *uint64    `gorm:"column:deleted_by_id"`
 	SourceFileID   *string    `gorm:"column:source_file_id"`
 	SampleFileID   *string    `gorm:"column:sample_file_id"`
-	IsDeleted      bool       `gorm:"column:is_deleted;not null"`
-	DeletedAt      *time.Time `gorm:"column:deleted_at"`
-	DeletedByID    *uint64    `gorm:"column:deleted_by_id"`
 	LanguageName   *string    `gorm:"column:language_name;size:255"`
 	VoiceID        *string    `gorm:"column:voice_id;size:255"`
 	ModelType      *string    `gorm:"column:model_type;size:64"`
@@ -60,9 +60,9 @@ import "time"
 	SpaceID        *uint64    `gorm:"column:space_id"`
  }
 
- func (TTSVoicePO) TableName() string { return "tts_voice" }
+ func (TTSVoice) TableName() string { return "tts_voice" }
 
- type AppTTSSettingsPO struct {
+ type AppTTSSettings struct {
 	ID            uint64  `gorm:"column:id;primaryKey;autoIncrement"`
 	AppID         uint64  `gorm:"column:app_id;not null"`
 	Provider      string  `gorm:"column:provider;size:255;not null"`
@@ -75,9 +75,9 @@ import "time"
 	UpdatedAtMs   uint64  `gorm:"column:updated_at;not null"`
  }
 
- func (AppTTSSettingsPO) TableName() string { return "app_tts_settings" }
+ func (AppTTSSettings) TableName() string { return "app_tts_settings" }
 
- type HardwareTTSSettingsPO struct {
+ type HardwareTTSSettings struct {
 	ID               uint64   `gorm:"column:id;primaryKey;autoIncrement"`
 	DeviceID         string   `gorm:"column:device_id;size:255;not null"`
 	HardwareDeviceID *uint64  `gorm:"column:hardware_device_id"`
@@ -92,4 +92,4 @@ import "time"
 	IsDeleted        bool     `gorm:"column:is_deleted;not null"`
  }
 
- func (HardwareTTSSettingsPO) TableName() string { return "hardware_tts_settings" }
+ func (HardwareTTSSettings) TableName() string { return "hardware_tts_settings" }

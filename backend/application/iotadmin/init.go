@@ -3,25 +3,23 @@ package iotadmin
 import (
 	"gorm.io/gorm"
 
-	domain "github.com/coze-dev/coze-studio/backend/domain/iot"
-	mysqlrepo "github.com/coze-dev/coze-studio/backend/infra/impl/mysql/iot"
+	repo "github.com/coze-dev/coze-studio/backend/domain/iot/repository"
 )
 
 type ApplicationService struct {
-	DeviceRepo  domain.DeviceRepository
-	VoiceRepo   domain.VoiceRepository
-	SettingsRepo domain.TTSSettingsRepository
+	DeviceRepo   repo.DeviceRepository
+	VoiceRepo    repo.VoiceRepository
+	SettingsRepo repo.TTSSettingsRepository
 }
 
 var SVC *ApplicationService
 
-// InitService 通过 gorm.DB 装配 mysql 仓储实现
+// InitService 通过 gorm.DB 装配仓储实现（对齐 domain/user 风格）
 func InitService(db *gorm.DB) *ApplicationService {
-	bundle := mysqlrepo.NewRepositories(db)
 	SVC = &ApplicationService{
-		DeviceRepo:   bundle.Devices,
-		VoiceRepo:    bundle.Voices,
-		SettingsRepo: bundle.Settings,
+		DeviceRepo:   repo.NewDeviceRepo(db),
+		VoiceRepo:    repo.NewVoiceRepo(db),
+		SettingsRepo: repo.NewTTSSettingsRepo(db),
 	}
 	return SVC
 }
