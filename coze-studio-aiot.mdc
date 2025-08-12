@@ -1,0 +1,32 @@
+# AIoT 开发说明（DDD 对齐）
+
+- 领域层：`backend/domain/iot/`
+  - 实体（无 ORM）：`entity.go`
+  - 仓储接口：`repository/repository.go`
+  - 领域服务：`service/service.go`
+  - DAL（内部实现）：`internal/dal/`
+- 应用层：`backend/application/iotadmin/`
+  - 装配仓储与领域服务，注册跨域服务默认实例
+- 跨域契约：`crossdomain/contract/iot`（配合 `crossdomain/impl/iot` 适配）
+- 总线接入：`backend/application/iot/` 仅依赖事件总线契约与跨域服务
+
+## 初始化与跨域调用示例
+
+- 初始化注册（`backend/application/iotadmin/init.go`）：
+```go
+svc := domainSvc.NewService(deviceRepo, voiceRepo, settingsRepo)
+crossIOT.SetDefaultSVC(implIOT.NewAdapter(svc))
+```
+
+- 业务侧调用（`backend/application/iot/init.go`）：
+```go
+svc := crossIOT.GetDefaultSVC()
+if svc != nil {
+    eff, _ := svc.GetEffectiveTTS(ctx, deviceID, appIDPtr)
+    // 使用 eff.Provider / eff.Model / eff.Voice
+}
+```
+
+## 参考
+- 详细说明：`docs/iot-ddd-notes.md`
+- 项目综述与 IoT 集成：`CLAUDE.md` 中“IoT 与智能语音集成（PR #1）”

@@ -34,6 +34,12 @@ func GetDefaultSVC() ConsumerService {
 	return defaultSVC
 }
 
+// ProducerFactory 提供统一的 Producer 构造，避免上层直接依赖具体实现
+// nameServer/topic/group/retries 的含义与实现层保持一致
+// 若未设置默认工厂，GetDefaultProducerFactory 将返回 nil
+// 上层需在应用初始化阶段注入
+//
+// 该接口不破坏现有 ConsumerService 注入模式
 type ConsumerService interface {
 	RegisterConsumer(nameServer, topic, group string, consumerHandler ConsumerHandler, opts ...ConsumerOpt) error
 }
@@ -46,4 +52,19 @@ type Message struct {
 	Topic string
 	Group string
 	Body  []byte
+}
+
+// ProducerFactory 定义
+type ProducerFactory interface {
+	NewProducer(nameServer, topic, group string, retries int) (Producer, error)
+}
+
+var defaultProducerFactory ProducerFactory
+
+func SetDefaultProducerFactory(f ProducerFactory) {
+	defaultProducerFactory = f
+}
+
+func GetDefaultProducerFactory() ProducerFactory {
+	return defaultProducerFactory
 }

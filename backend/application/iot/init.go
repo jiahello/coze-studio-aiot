@@ -8,18 +8,19 @@ import (
 	"io"
 	"os"
 	"time"
+	"strconv"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/conversation/run"
 	convApp "github.com/coze-dev/coze-studio/backend/application/conversation"
-	admin "github.com/coze-dev/coze-studio/backend/application/iotadmin"
 	convMsg "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
 	agentrunEntity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 
-	"github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
-	"github.com/coze-dev/coze-studio/backend/pkg/logs"
-	"github.com/coze-dev/coze-studio/backend/types/consts"
+	// 基础设施契约
 	contract "github.com/coze-dev/coze-studio/backend/infra/contract/eventbus"
 	msg "github.com/coze-dev/coze-studio/backend/infra/contract/iot"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
+	crossIOT "github.com/coze-dev/coze-studio/backend/crossdomain/contract/iot"
 )
 
 // Init wires IoT/Voice NSQ topics for minimal LLM <-> TTS loop.
@@ -30,36 +31,43 @@ func Init(ctx context.Context) (*Service, error) {
 		nameServer = "nsqd:4150"
 	}
 
+	// 使用契约层默认 ConsumerService/ProducerFactory
+	consumerSVC := contract.GetDefaultSVC()
+	producerFactory := contract.GetDefaultProducerFactory()
+	if consumerSVC == nil || producerFactory == nil {
+		return nil, fmt.Errorf("eventbus not initialized: consumer=%v, producer_factory=%v", consumerSVC != nil, producerFactory != nil)
+	}
+
 	// Register consumers
 	svc := &Service{}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicDeviceInbound, consts.RMQConsumeGroupIoT, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicDeviceInbound, consts.RMQConsumeGroupIoT, svc); err != nil {
 		return nil, fmt.Errorf("register device inbound consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, svc); err != nil {
 		return nil, fmt.Errorf("register llm results consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, svc); err != nil {
 		return nil, fmt.Errorf("register llm tasks consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicTTSResults, consts.RMQConsumeGroupTTS, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicTTSResults, consts.RMQConsumeGroupTTS, svc); err != nil {
 		return nil, fmt.Errorf("register tts results consumer failed: %w", err)
 	}
 
 	// Create producers
 	var err error
-	svc.deviceOutboundP, err = eventbus.NewProducer(nameServer, consts.RMQTopicDeviceOutbound, consts.RMQConsumeGroupIoT, 1)
+	svc.deviceOutboundP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicDeviceOutbound, consts.RMQConsumeGroupIoT, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init device outbound producer failed: %w", err)
 	}
-	svc.llmTasksP, err = eventbus.NewProducer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, 1)
+	svc.llmTasksP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init llm tasks producer failed: %w", err)
 	}
-	svc.llmResultsP, err = eventbus.NewProducer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, 1)
+	svc.llmResultsP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init llm results producer failed: %w", err)
 	}
-	svc.ttsTasksP, err = eventbus.NewProducer(nameServer, consts.RMQTopicTTSTasks, consts.RMQConsumeGroupTTS, 1)
+	svc.ttsTasksP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicTTSTasks, consts.RMQConsumeGroupTTS, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init tts tasks producer failed: %w", err)
 	}
@@ -106,7 +114,7 @@ func (s *Service) HandleMessage(ctx context.Context, m *contract.Message) error 
 			}
 		}
 		if final {
-			provider, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+			provider, model, voice := resolveTTSConfig(ctx, env.DeviceID, env.AppID, env.SpaceID)
 			env.Type = "tts.request"
 			env.Payload = msg.TTSRequest{Text: text, Provider: provider, Model: model, Voice: voice}
 			return s.forward(ctx, s.ttsTasksP, &env)
@@ -130,24 +138,23 @@ func (s *Service) forward(ctx context.Context, p contract.Producer, env *msg.Env
 	return p.Send(ctx, b)
 }
 
-// resolveTTSConfig returns provider/model/voice using priority: hardware -> app -> default
-func resolveTTSConfig(deviceID, appID, spaceID string) (string, string, string) {
+// resolveTTSConfig returns provider/model/voice using priority via crossdomain service
+func resolveTTSConfig(ctx context.Context, deviceID, appID, spaceID string) (string, string, string) {
 	// defaults
 	dProv, dModel, dVoice := "doubao", "speech-1", "doubao-default"
-	if admin.SVC == nil || admin.SVC.DB == nil {
+	// cross-domain service must be registered by application init
+	svc := crossIOT.GetDefaultSVC()
+	if svc == nil {
 		return dProv, dModel, dVoice
 	}
-	// hardware level
-	var h admin.HardwareTTSSettings
-	if err := admin.SVC.DB.Where("device_id = ?", deviceID).First(&h).Error; err == nil {
-		return h.Provider, h.Model, h.Voice
-	}
-	// app level
+	var appIDPtr *uint64
 	if appID != "" {
-		var a admin.AppTTSSettings
-		if err := admin.SVC.DB.Where("app_id = ?", appID).First(&a).Error; err == nil {
-			return a.Provider, a.Model, a.Voice
+		if v, err := strconv.ParseUint(appID, 10, 64); err == nil {
+			appIDPtr = &v
 		}
+	}
+	if eff, err := svc.GetEffectiveTTS(ctx, deviceID, appIDPtr); err == nil && eff != nil {
+		return eff.Provider, eff.Model, eff.Voice
 	}
 	return dProv, dModel, dVoice
 }
@@ -225,7 +232,7 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 					}
 					_ = s.forward(ctx, s.llmResultsP, envChunk)
 					// also forward to TTS as streaming request
-					prov, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+					prov, model, voice := resolveTTSConfig(ctx, env.DeviceID, env.AppID, env.SpaceID)
 					envTTS := *envChunk
 					envTTS.Type = "tts.request"
 					envTTS.Payload = msg.TTSRequest{Text: piece, Provider: prov, Model: model, Voice: voice}
