@@ -157,6 +157,8 @@ func Init(ctx context.Context) (err error) {
 func initEventBus(infra *appinfra.AppDependencies) *eventbusImpl {
 	e := &eventbusImpl{}
 	eventbus.SetDefaultSVC(implEventbus.NewConsumerService())
+	// 注册默认 ProducerFactory，供上层通过契约创建 Producer
+	implEventbus.RegisterDefaultProducerFactory()
 	e.resourceEventBus = search.NewResourceEventBus(infra.ResourceEventProducer)
 	e.projectEventBus = search.NewProjectEventBus(infra.AppEventProducer)
 

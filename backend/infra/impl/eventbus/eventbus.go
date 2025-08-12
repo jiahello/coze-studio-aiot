@@ -37,6 +37,8 @@ type (
 
 type consumerServiceImpl struct{}
 
+type producerFactoryImpl struct{}
+
 func NewConsumerService() ConsumerService {
 	return &consumerServiceImpl{}
 }
@@ -59,6 +61,7 @@ func (consumerServiceImpl) RegisterConsumer(nameServer, topic, group string, con
 	return fmt.Errorf("invalid mq type: %s , only support nsq, kafka, rmq", tp)
 }
 
+// Deprecated: NewProducer. Use GetDefaultProducerFactory().NewProducer instead.
 func NewProducer(nameServer, topic, group string, retries int) (eventbus.Producer, error) {
 	tp := os.Getenv(consts.MQTypeKey)
 	switch tp {
@@ -71,4 +74,13 @@ func NewProducer(nameServer, topic, group string, retries int) (eventbus.Produce
 	}
 
 	return nil, fmt.Errorf("invalid mq type: %s , only support nsq, kafka, rmq", tp)
+}
+
+// 注册默认 ProducerFactory
+func RegisterDefaultProducerFactory() {
+	eventbus.SetDefaultProducerFactory(&producerFactoryImpl{})
+}
+
+func (producerFactoryImpl) NewProducer(nameServer, topic, group string, retries int) (eventbus.Producer, error) {
+	return NewProducer(nameServer, topic, group, retries)
 }

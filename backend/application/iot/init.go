@@ -16,11 +16,11 @@ import (
 	convMsg "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
 	agentrunEntity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 
-	"github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
-	"github.com/coze-dev/coze-studio/backend/pkg/logs"
-	"github.com/coze-dev/coze-studio/backend/types/consts"
+	// 基础设施契约
 	contract "github.com/coze-dev/coze-studio/backend/infra/contract/eventbus"
 	msg "github.com/coze-dev/coze-studio/backend/infra/contract/iot"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 // Init wires IoT/Voice NSQ topics for minimal LLM <-> TTS loop.
@@ -31,36 +31,43 @@ func Init(ctx context.Context) (*Service, error) {
 		nameServer = "nsqd:4150"
 	}
 
+	// 使用契约层默认 ConsumerService/ProducerFactory
+	consumerSVC := contract.GetDefaultSVC()
+	producerFactory := contract.GetDefaultProducerFactory()
+	if consumerSVC == nil || producerFactory == nil {
+		return nil, fmt.Errorf("eventbus not initialized: consumer=%v, producer_factory=%v", consumerSVC != nil, producerFactory != nil)
+	}
+
 	// Register consumers
 	svc := &Service{}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicDeviceInbound, consts.RMQConsumeGroupIoT, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicDeviceInbound, consts.RMQConsumeGroupIoT, svc); err != nil {
 		return nil, fmt.Errorf("register device inbound consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, svc); err != nil {
 		return nil, fmt.Errorf("register llm results consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, svc); err != nil {
 		return nil, fmt.Errorf("register llm tasks consumer failed: %w", err)
 	}
-	if err := eventbus.DefaultSVC().RegisterConsumer(nameServer, consts.RMQTopicTTSResults, consts.RMQConsumeGroupTTS, svc); err != nil {
+	if err := consumerSVC.RegisterConsumer(nameServer, consts.RMQTopicTTSResults, consts.RMQConsumeGroupTTS, svc); err != nil {
 		return nil, fmt.Errorf("register tts results consumer failed: %w", err)
 	}
 
 	// Create producers
 	var err error
-	svc.deviceOutboundP, err = eventbus.NewProducer(nameServer, consts.RMQTopicDeviceOutbound, consts.RMQConsumeGroupIoT, 1)
+	svc.deviceOutboundP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicDeviceOutbound, consts.RMQConsumeGroupIoT, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init device outbound producer failed: %w", err)
 	}
-	svc.llmTasksP, err = eventbus.NewProducer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, 1)
+	svc.llmTasksP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicLLMTasks, consts.RMQConsumeGroupLLM, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init llm tasks producer failed: %w", err)
 	}
-	svc.llmResultsP, err = eventbus.NewProducer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, 1)
+	svc.llmResultsP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicLLMResults, consts.RMQConsumeGroupLLM, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init llm results producer failed: %w", err)
 	}
-	svc.ttsTasksP, err = eventbus.NewProducer(nameServer, consts.RMQTopicTTSTasks, consts.RMQConsumeGroupTTS, 1)
+	svc.ttsTasksP, err = producerFactory.NewProducer(nameServer, consts.RMQTopicTTSTasks, consts.RMQConsumeGroupTTS, 1)
 	if err != nil {
 		return nil, fmt.Errorf("init tts tasks producer failed: %w", err)
 	}
