@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"strconv"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/conversation/run"
 	convApp "github.com/coze-dev/coze-studio/backend/application/conversation"
@@ -106,7 +107,7 @@ func (s *Service) HandleMessage(ctx context.Context, m *contract.Message) error 
 			}
 		}
 		if final {
-			provider, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+			provider, model, voice := resolveTTSConfig(ctx, env.DeviceID, env.AppID, env.SpaceID)
 			env.Type = "tts.request"
 			env.Payload = msg.TTSRequest{Text: text, Provider: provider, Model: model, Voice: voice}
 			return s.forward(ctx, s.ttsTasksP, &env)
@@ -131,23 +132,20 @@ func (s *Service) forward(ctx context.Context, p contract.Producer, env *msg.Env
 }
 
 // resolveTTSConfig returns provider/model/voice using priority: hardware -> app -> default
-func resolveTTSConfig(deviceID, appID, spaceID string) (string, string, string) {
+func resolveTTSConfig(ctx context.Context, deviceID, appID, spaceID string) (string, string, string) {
 	// defaults
 	dProv, dModel, dVoice := "doubao", "speech-1", "doubao-default"
-	if admin.SVC == nil || admin.SVC.DB == nil {
+	if admin.SVC == nil {
 		return dProv, dModel, dVoice
 	}
-	// hardware level
-	var h admin.HardwareTTSSettings
-	if err := admin.SVC.DB.Where("device_id = ?", deviceID).First(&h).Error; err == nil {
-		return h.Provider, h.Model, h.Voice
-	}
-	// app level
+	var appIDPtr *uint64
 	if appID != "" {
-		var a admin.AppTTSSettings
-		if err := admin.SVC.DB.Where("app_id = ?", appID).First(&a).Error; err == nil {
-			return a.Provider, a.Model, a.Voice
+		if v, err := strconv.ParseUint(appID, 10, 64); err == nil {
+			appIDPtr = &v
 		}
+	}
+	if eff, err := admin.SVC.GetEffectiveDeviceTTS(ctx, deviceID, appIDPtr); err == nil && eff != nil {
+		return eff.Provider, eff.Model, eff.Voice
 	}
 	return dProv, dModel, dVoice
 }
@@ -225,7 +223,7 @@ func (s *Service) handleLLMTask(ctx context.Context, env *msg.Envelope) error {
 					}
 					_ = s.forward(ctx, s.llmResultsP, envChunk)
 					// also forward to TTS as streaming request
-					prov, model, voice := resolveTTSConfig(env.DeviceID, env.AppID, env.SpaceID)
+					prov, model, voice := resolveTTSConfig(ctx, env.DeviceID, env.AppID, env.SpaceID)
 					envTTS := *envChunk
 					envTTS.Type = "tts.request"
 					envTTS.Payload = msg.TTSRequest{Text: piece, Provider: prov, Model: model, Voice: voice}
