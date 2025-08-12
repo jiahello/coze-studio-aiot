@@ -12,7 +12,6 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/conversation/run"
 	convApp "github.com/coze-dev/coze-studio/backend/application/conversation"
-	admin "github.com/coze-dev/coze-studio/backend/application/iotadmin"
 	convMsg "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
 	agentrunEntity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 
@@ -21,6 +20,7 @@ import (
 	msg "github.com/coze-dev/coze-studio/backend/infra/contract/iot"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
+	crossIOT "github.com/coze-dev/coze-studio/backend/crossdomain/contract/iot"
 )
 
 // Init wires IoT/Voice NSQ topics for minimal LLM <-> TTS loop.
@@ -138,11 +138,13 @@ func (s *Service) forward(ctx context.Context, p contract.Producer, env *msg.Env
 	return p.Send(ctx, b)
 }
 
-// resolveTTSConfig returns provider/model/voice using priority: hardware -> app -> default
+// resolveTTSConfig returns provider/model/voice using priority via crossdomain service
 func resolveTTSConfig(ctx context.Context, deviceID, appID, spaceID string) (string, string, string) {
 	// defaults
 	dProv, dModel, dVoice := "doubao", "speech-1", "doubao-default"
-	if admin.SVC == nil {
+	// cross-domain service must be registered by application init
+	svc := crossIOT.GetDefaultSVC()
+	if svc == nil {
 		return dProv, dModel, dVoice
 	}
 	var appIDPtr *uint64
@@ -151,7 +153,7 @@ func resolveTTSConfig(ctx context.Context, deviceID, appID, spaceID string) (str
 			appIDPtr = &v
 		}
 	}
-	if eff, err := admin.SVC.GetEffectiveDeviceTTS(ctx, deviceID, appIDPtr); err == nil && eff != nil {
+	if eff, err := svc.GetEffectiveTTS(ctx, deviceID, appIDPtr); err == nil && eff != nil {
 		return eff.Provider, eff.Model, eff.Voice
 	}
 	return dProv, dModel, dVoice
