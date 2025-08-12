@@ -14,29 +14,28 @@
  * limitations under the License.
  */
 
-package crossmessage
+package datacopy
 
 import (
 	"context"
 
-	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
+	"gorm.io/gorm"
+
+	"github.com/coze-dev/coze-studio/backend/domain/datacopy"
 )
 
-type Message interface {
-	GetByRunIDs(ctx context.Context, conversationID int64, runIDs []int64) ([]*message.Message, error)
-	PreCreate(ctx context.Context, msg *message.Message) (*message.Message, error)
-	Create(ctx context.Context, msg *message.Message) (*message.Message, error)
-	Edit(ctx context.Context, msg *message.Message) (*message.Message, error)
+type DataCopy interface {
+	CheckAndGenCopyTask(ctx context.Context, req *datacopy.CheckAndGenCopyTaskReq) (*datacopy.CheckAndGenCopyTaskResp, error)
+	UpdateCopyTask(ctx context.Context, req *datacopy.UpdateCopyTaskReq) error
+	UpdateCopyTaskWithTX(ctx context.Context, req *datacopy.UpdateCopyTaskReq, tx *gorm.DB) error
 }
 
-var defaultSVC Message
+var defaultSVC DataCopy
 
-type MessageMeta = message.Message
-
-func DefaultSVC() Message {
+func DefaultSVC() DataCopy {
 	return defaultSVC
 }
 
-func SetDefaultSVC(c Message) {
+func SetDefaultSVC(c DataCopy) {
 	defaultSVC = c
 }
