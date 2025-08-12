@@ -8,18 +8,18 @@ import (
 	domain "github.com/coze-dev/coze-studio/backend/domain/iot"
 )
 
-type deviceDAO struct { db *gorm.DB }
+type DeviceDAO struct { db *gorm.DB }
 
-type voiceDAO struct { db *gorm.DB }
+type VoiceDAO struct { db *gorm.DB }
 
-type settingsDAO struct { db *gorm.DB }
+type SettingsDAO struct { db *gorm.DB }
 
-func NewDeviceDAO(db *gorm.DB) domain.DeviceRepository   { return &deviceDAO{db: db} }
-func NewVoiceDAO(db *gorm.DB) domain.VoiceRepository     { return &voiceDAO{db: db} }
-func NewSettingsDAO(db *gorm.DB) domain.TTSSettingsRepository { return &settingsDAO{db: db} }
+func NewDeviceDAO(db *gorm.DB) *DeviceDAO   { return &DeviceDAO{db: db} }
+func NewVoiceDAO(db *gorm.DB) *VoiceDAO     { return &VoiceDAO{db: db} }
+func NewSettingsDAO(db *gorm.DB) *SettingsDAO { return &SettingsDAO{db: db} }
 
 // device
-func (d *deviceDAO) ListDevices(ctx context.Context, spaceID uint64, page, pageSize int, keyword string) ([]*domain.HardwareDevice, int64, error) {
+func (d *DeviceDAO) ListDevices(ctx context.Context, spaceID uint64, page, pageSize int, keyword string) ([]*domain.HardwareDevice, int64, error) {
 	if page <= 0 { page = 1 }
 	if pageSize <= 0 || pageSize > 200 { pageSize = 20 }
 	var (
@@ -46,7 +46,7 @@ func (d *deviceDAO) ListDevices(ctx context.Context, spaceID uint64, page, pageS
 	return res, total, nil
 }
 
-func (d *deviceDAO) UpsertDevice(ctx context.Context, dev *domain.HardwareDevice) error {
+func (d *DeviceDAO) UpsertDevice(ctx context.Context, dev *domain.HardwareDevice) error {
 	existing := &HardwareDevice{}
 	err := d.db.WithContext(ctx).Where("space_id = ? AND device_id = ?", dev.SpaceID, dev.DeviceID).First(existing).Error
 	if err == nil {
@@ -71,7 +71,7 @@ func (d *deviceDAO) UpsertDevice(ctx context.Context, dev *domain.HardwareDevice
 }
 
 // voice
-func (v *voiceDAO) ListVoices(ctx context.Context, spaceID *uint64, provider, language, gender string, page, pageSize int) ([]*domain.TTSVoice, int64, error) {
+func (v *VoiceDAO) ListVoices(ctx context.Context, spaceID *uint64, provider, language, gender string, page, pageSize int) ([]*domain.TTSVoice, int64, error) {
 	if page <= 0 { page = 1 }
 	if pageSize <= 0 || pageSize > 200 { pageSize = 20 }
 	var (
@@ -100,7 +100,7 @@ func (v *voiceDAO) ListVoices(ctx context.Context, spaceID *uint64, provider, la
 	return res, total, nil
 }
 
-func (v *voiceDAO) GetVoiceSampleURL(ctx context.Context, provider, voice string, spaceID *uint64) (string, error) {
+func (v *VoiceDAO) GetVoiceSampleURL(ctx context.Context, provider, voice string, spaceID *uint64) (string, error) {
 	var m TTSVoice
 	db := v.db.WithContext(ctx).Model(&TTSVoice{}).Where("provider = ? AND voice_code = ?", provider, voice)
 	if spaceID != nil { db = db.Where("space_id = ? OR space_id IS NULL", *spaceID) }
@@ -110,7 +110,7 @@ func (v *voiceDAO) GetVoiceSampleURL(ctx context.Context, provider, voice string
 }
 
 // settings
-func (s *settingsDAO) UpsertAppTTS(ctx context.Context, cfg *domain.AppTTSSettings) error {
+func (s *SettingsDAO) UpsertAppTTS(ctx context.Context, cfg *domain.AppTTSSettings) error {
 	existing := &AppTTSSettings{}
 	err := s.db.WithContext(ctx).Where("app_id = ?", cfg.AppID).First(existing).Error
 	if err == nil {
@@ -124,7 +124,7 @@ func (s *settingsDAO) UpsertAppTTS(ctx context.Context, cfg *domain.AppTTSSettin
 	return err
 }
 
-func (s *settingsDAO) UpsertHardwareTTS(ctx context.Context, cfg *domain.HardwareTTSSettings) error {
+func (s *SettingsDAO) UpsertHardwareTTS(ctx context.Context, cfg *domain.HardwareTTSSettings) error {
 	existing := &HardwareTTSSettings{}
 	err := s.db.WithContext(ctx).Where("device_id = ?", cfg.DeviceID).First(existing).Error
 	if err == nil {
@@ -138,16 +138,14 @@ func (s *settingsDAO) UpsertHardwareTTS(ctx context.Context, cfg *domain.Hardwar
 	return err
 }
 
-func (s *settingsDAO) GetEffectiveTTS(ctx context.Context, deviceID string, appID *uint64) (*domain.EffectiveTTS, error) {
+func (s *SettingsDAO) GetAppTTSByAppID(ctx context.Context, appID uint64) (*domain.AppTTSSettings, error) {
+	var a AppTTSSettings
+	if err := s.db.WithContext(ctx).Where("app_id = ?", appID).First(&a).Error; err != nil { return nil, err }
+	return &domain.AppTTSSettings{ID: a.ID, AppID: a.AppID, Provider: a.Provider, Model: a.Model, Voice: a.Voice, VoiceRef: a.VoiceRef, CreatedUserID: a.CreatedUserID, UpdatedUserID: a.UpdatedUserID, CreatedAtMs: a.CreatedAtMs, UpdatedAtMs: a.UpdatedAtMs}, nil
+}
+
+func (s *SettingsDAO) GetHardwareTTSByDeviceID(ctx context.Context, deviceID string) (*domain.HardwareTTSSettings, error) {
 	var h HardwareTTSSettings
-	if err := s.db.WithContext(ctx).Where("device_id = ? AND is_deleted = 0", deviceID).First(&h).Error; err == nil {
-		return &domain.EffectiveTTS{Provider: h.Provider, Model: h.Model, Voice: h.Voice, Source: "device"}, nil
-	}
-	if appID != nil {
-		var a AppTTSSettings
-		if err := s.db.WithContext(ctx).Where("app_id = ?", *appID).First(&a).Error; err == nil {
-			return &domain.EffectiveTTS{Provider: a.Provider, Model: a.Model, Voice: a.Voice, Source: "app"}, nil
-		}
-	}
-	return &domain.EffectiveTTS{Provider: "doubao", Model: "speech-1", Voice: "doubao-standard", Source: "default"}, nil
+	if err := s.db.WithContext(ctx).Where("device_id = ? AND is_deleted = 0", deviceID).First(&h).Error; err != nil { return nil, err }
+	return &domain.HardwareTTSSettings{ID: h.ID, DeviceID: h.DeviceID, HardwareDeviceID: h.HardwareDeviceID, Provider: h.Provider, Model: h.Model, Voice: h.Voice, VoiceRef: h.VoiceRef, CreatedUserID: h.CreatedUserID, UpdatedUserID: h.UpdatedUserID, CreatedAtMs: h.CreatedAtMs, UpdatedAtMs: h.UpdatedAtMs, IsDeleted: h.IsDeleted}, nil
 }

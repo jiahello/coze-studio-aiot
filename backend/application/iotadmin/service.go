@@ -47,7 +47,7 @@ func (s *ApplicationService) UpsertHardwareTTS(ctx context.Context, cfg *domain.
 
 // GetEffectiveDeviceTTS returns the effective provider/model/voice and source priority: device > app > default.
 func (s *ApplicationService) GetEffectiveDeviceTTS(ctx context.Context, deviceID string, appID *uint64) (*domain.EffectiveTTS, error) {
-	return s.SettingsRepo.GetEffectiveTTS(ctx, deviceID, appID)
+	return s.Domain.GetEffectiveTTS(ctx, deviceID, appID)
 }
 
 // GetVoiceSampleURL finds a sample_url for provider+voice (space scoped first, then global)

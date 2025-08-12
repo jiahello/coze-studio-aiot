@@ -9,12 +9,12 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/iot"
 )
 
-// 构造函数，对齐 user 仓储风格
-func NewDeviceRepo(db *gorm.DB) iot.DeviceRepository { return dal.NewDeviceDAO(db) }
-func NewVoiceRepo(db *gorm.DB) iot.VoiceRepository { return dal.NewVoiceDAO(db) }
-func NewTTSSettingsRepo(db *gorm.DB) iot.TTSSettingsRepository { return dal.NewSettingsDAO(db) }
+// 构造函数：返回实现了接口的方法集的 *DAO
+func NewDeviceRepo(db *gorm.DB) DeviceRepository { return dal.NewDeviceDAO(db) }
+func NewVoiceRepo(db *gorm.DB) VoiceRepository { return dal.NewVoiceDAO(db) }
+func NewTTSSettingsRepo(db *gorm.DB) TTSSettingsRepository { return dal.NewSettingsDAO(db) }
 
-// 接口定义（与之前在 domain/iot/repository.go 中一致）
+// 接口定义
 
 type DeviceRepository interface {
 	ListDevices(ctx context.Context, spaceID uint64, page, pageSize int, keyword string) ([]*iot.HardwareDevice, int64, error)
@@ -29,5 +29,6 @@ type VoiceRepository interface {
 type TTSSettingsRepository interface {
 	UpsertAppTTS(ctx context.Context, cfg *iot.AppTTSSettings) error
 	UpsertHardwareTTS(ctx context.Context, cfg *iot.HardwareTTSSettings) error
-	GetEffectiveTTS(ctx context.Context, deviceID string, appID *uint64) (*iot.EffectiveTTS, error)
+	GetAppTTSByAppID(ctx context.Context, appID uint64) (*iot.AppTTSSettings, error)
+	GetHardwareTTSByDeviceID(ctx context.Context, deviceID string) (*iot.HardwareTTSSettings, error)
 }
