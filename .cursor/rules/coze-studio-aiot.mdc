@@ -1,10 +1,16 @@
-# CLAUDE.md
+---
+description: This file provides guidance to cursor when working with code in this repository.
+alwaysApply: false
+---
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# coze-studio-aiot.md
+
+This file provides guidance to cursor when working with code in this repository.
 
 ## Project Overview
 
 Coze Studio is an all-in-one AI agent development platform with both frontend (React + TypeScript) and backend (Go) components. The project uses a sophisticated monorepo architecture managed by Rush.js with 135+ frontend packages organized in a hierarchical dependency system.
+
 IoT/语音整合：Coze Studio 已引入物联网与智能语音的基础设施（数据库新增四表、NSQ 主题/消费组与可配置开关 `ENABLE_IOT_VOICE`、统一消息契约与后端接入点、前端 TTS/硬件入口）。详细说明见下文“IoT 与智能语音集成（PR #1）”。
 
 ## Development Commands
