@@ -14,27 +14,29 @@
  * limitations under the License.
  */
 
-package crossvariables
+package message
 
 import (
 	"context"
 
-	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/variables"
-	"github.com/coze-dev/coze-studio/backend/api/model/data/variable/kvmemory"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/message"
 )
 
-type Variables interface {
-	GetVariableInstance(ctx context.Context, e *variables.UserVariableMeta, keywords []string) ([]*kvmemory.KVItem, error)
-	SetVariableInstance(ctx context.Context, e *variables.UserVariableMeta, items []*kvmemory.KVItem) ([]string, error)
-	DecryptSysUUIDKey(ctx context.Context, encryptSysUUIDKey string) *variables.UserVariableMeta
+type Message interface {
+	GetByRunIDs(ctx context.Context, conversationID int64, runIDs []int64) ([]*message.Message, error)
+	PreCreate(ctx context.Context, msg *message.Message) (*message.Message, error)
+	Create(ctx context.Context, msg *message.Message) (*message.Message, error)
+	Edit(ctx context.Context, msg *message.Message) (*message.Message, error)
 }
 
-var defaultSVC Variables
+var defaultSVC Message
 
-func DefaultSVC() Variables {
+type MessageMeta = message.Message
+
+func DefaultSVC() Message {
 	return defaultSVC
 }
 
-func SetDefaultSVC(svc Variables) {
-	defaultSVC = svc
+func SetDefaultSVC(c Message) {
+	defaultSVC = c
 }

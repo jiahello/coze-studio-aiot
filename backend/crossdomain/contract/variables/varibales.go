@@ -14,26 +14,27 @@
  * limitations under the License.
  */
 
-package crossconnector
+package variables
 
 import (
 	"context"
 
-	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/connector"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/variables"
+	"github.com/coze-dev/coze-studio/backend/api/model/data/variable/kvmemory"
 )
 
-type Connector interface {
-	List(ctx context.Context) ([]*connector.Connector, error)
-	GetByIDs(ctx context.Context, ids []int64) (map[int64]*connector.Connector, error)
-	GetByID(ctx context.Context, id int64) (*connector.Connector, error)
+type Variables interface {
+	GetVariableInstance(ctx context.Context, e *variables.UserVariableMeta, keywords []string) ([]*kvmemory.KVItem, error)
+	SetVariableInstance(ctx context.Context, e *variables.UserVariableMeta, items []*kvmemory.KVItem) ([]string, error)
+	DecryptSysUUIDKey(ctx context.Context, encryptSysUUIDKey string) *variables.UserVariableMeta
 }
 
-var defaultSVC Connector
+var defaultSVC Variables
 
-func DefaultSVC() Connector {
+func DefaultSVC() Variables {
 	return defaultSVC
 }
 
-func SetDefaultSVC(c Connector) {
-	defaultSVC = c
+func SetDefaultSVC(svc Variables) {
+	defaultSVC = svc
 }

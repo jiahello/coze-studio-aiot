@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package crosssearch
+package search
 
 import (
 	"context"

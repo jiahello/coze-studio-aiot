@@ -14,28 +14,24 @@
  * limitations under the License.
  */
 
-package crossdatacopy
+package conversation
 
 import (
 	"context"
 
-	"gorm.io/gorm"
-
-	"github.com/coze-dev/coze-studio/backend/domain/datacopy"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/conversation"
 )
 
-type DataCopy interface {
-	CheckAndGenCopyTask(ctx context.Context, req *datacopy.CheckAndGenCopyTaskReq) (*datacopy.CheckAndGenCopyTaskResp, error)
-	UpdateCopyTask(ctx context.Context, req *datacopy.UpdateCopyTaskReq) error
-	UpdateCopyTaskWithTX(ctx context.Context, req *datacopy.UpdateCopyTaskReq, tx *gorm.DB) error
+type Conversation interface {
+	GetCurrentConversation(ctx context.Context, req *conversation.GetCurrent) (*conversation.Conversation, error)
 }
 
-var defaultSVC DataCopy
+var defaultSVC Conversation
 
-func DefaultSVC() DataCopy {
+func DefaultSVC() Conversation {
 	return defaultSVC
 }
 
-func SetDefaultSVC(c DataCopy) {
+func SetDefaultSVC(c Conversation) {
 	defaultSVC = c
 }
