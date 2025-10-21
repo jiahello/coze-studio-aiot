@@ -47,7 +47,9 @@ import (
 	crossdatacopy "github.com/coze-dev/coze-studio/backend/crossdomain/contract/datacopy"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/contract/knowledge"
 	crossmessage "github.com/coze-dev/coze-studio/backend/crossdomain/contract/message"
+	crossmodelmgr "github.com/coze-dev/coze-studio/backend/crossdomain/contract/modelmgr"
 	crossplugin "github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin"
+	crossupload "github.com/coze-dev/coze-studio/backend/crossdomain/contract/upload"
 	crossuser "github.com/coze-dev/coze-studio/backend/crossdomain/contract/user"
 	crossvariables "github.com/coze-dev/coze-studio/backend/crossdomain/contract/variables"
 	crossworkflow "github.com/coze-dev/coze-studio/backend/crossdomain/contract/workflow"
@@ -59,14 +61,21 @@ import (
 	dataCopyImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/datacopy"
 	knowledgeImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/knowledge"
 	messageImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/message"
+	modelmgrImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/modelmgr"
 	pluginImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/plugin"
 	searchImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/search"
 	singleagentImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/singleagent"
+	uploadImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/upload"
 	variablesImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/variables"
 	workflowImpl "github.com/coze-dev/coze-studio/backend/crossdomain/impl/workflow"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/eventbus"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/checkpoint"
-	implEventbus "github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
+	"github.com/coze-dev/coze-studio/backend/infra/chatmodel/impl/chatmodel"
+	"github.com/coze-dev/coze-studio/backend/infra/checkpoint"
+	"github.com/coze-dev/coze-studio/backend/infra/document/progressbar"
+	progressBarImpl "github.com/coze-dev/coze-studio/backend/infra/document/progressbar/impl/progressbar"
+	"github.com/coze-dev/coze-studio/backend/infra/eventbus"
+	implEventbus "github.com/coze-dev/coze-studio/backend/infra/eventbus/impl"
+	"github.com/coze-dev/coze-studio/backend/infra/sqlparser"
+	sqlparserImpl "github.com/coze-dev/coze-studio/backend/infra/sqlparser/impl/sqlparser"
 )
 
 type eventbusImpl struct {
@@ -83,6 +92,7 @@ type basicServices struct {
 	promptSVC    *prompt.PromptApplicationService
 	templateSVC  *template.ApplicationService
 	openAuthSVC  *openauth.OpenAuthApplicationService
+	uploadSVC    *upload.UploadService
 }
 
 type primaryServices struct {
@@ -110,6 +120,9 @@ func Init(ctx context.Context) (err error) {
 		return err
 	}
 
+	progressbar.New = progressBarImpl.NewProgressBar
+	sqlparser.New = sqlparserImpl.NewSQLParser
+
 	eventbus := initEventBus(infra)
 
 	basicServices, err := initBasicServices(ctx, infra, eventbus)
@@ -130,16 +143,18 @@ func Init(ctx context.Context) (err error) {
 	crossconnector.SetDefaultSVC(connectorImpl.InitDomainService(basicServices.connectorSVC.DomainSVC))
 	crossdatabase.SetDefaultSVC(databaseImpl.InitDomainService(primaryServices.memorySVC.DatabaseDomainSVC))
 	crossknowledge.SetDefaultSVC(knowledgeImpl.InitDomainService(primaryServices.knowledgeSVC.DomainSVC))
-	crossplugin.SetDefaultSVC(pluginImpl.InitDomainService(primaryServices.pluginSVC.DomainSVC))
+	crossplugin.SetDefaultSVC(pluginImpl.InitDomainService(primaryServices.pluginSVC.DomainSVC, infra.TOSClient))
 	crossvariables.SetDefaultSVC(variablesImpl.InitDomainService(primaryServices.memorySVC.VariablesDomainSVC))
 	crossworkflow.SetDefaultSVC(workflowImpl.InitDomainService(primaryServices.workflowSVC.DomainSVC))
 	crossconversation.SetDefaultSVC(conversationImpl.InitDomainService(complexServices.conversationSVC.ConversationDomainSVC))
 	crossmessage.SetDefaultSVC(messageImpl.InitDomainService(complexServices.conversationSVC.MessageDomainSVC))
 	crossagentrun.SetDefaultSVC(agentrunImpl.InitDomainService(complexServices.conversationSVC.AgentRunDomainSVC))
-	crossagent.SetDefaultSVC(singleagentImpl.InitDomainService(complexServices.singleAgentSVC.DomainSVC, infra.ImageXClient))
+	crossagent.SetDefaultSVC(singleagentImpl.InitDomainService(complexServices.singleAgentSVC.DomainSVC))
 	crossuser.SetDefaultSVC(crossuserImpl.InitDomainService(basicServices.userSVC.DomainSVC))
 	crossdatacopy.SetDefaultSVC(dataCopyImpl.InitDomainService(basicServices.infra))
 	crosssearch.SetDefaultSVC(searchImpl.InitDomainService(complexServices.searchSVC.DomainSVC))
+	crossmodelmgr.SetDefaultSVC(modelmgrImpl.InitDomainService(infra.ModelMgr, nil))
+	crossupload.SetDefaultSVC(uploadImpl.InitDomainService(basicServices.uploadSVC.UploadSVC))
 
 	return nil
 }
@@ -155,7 +170,7 @@ func initEventBus(infra *appinfra.AppDependencies) *eventbusImpl {
 
 // initBasicServices init basic services that only depends on infra.
 func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *eventbusImpl) (*basicServices, error) {
-	upload.InitService(infra.TOSClient, infra.CacheCli)
+	uploadSVC := upload.InitService(&upload.UploadComponents{Cache: infra.CacheCli, Oss: infra.TOSClient, DB: infra.DB, Idgen: infra.IDGenSVC})
 	openAuthSVC := openauth.InitService(infra.DB, infra.IDGenSVC)
 	promptSVC := prompt.InitService(infra.DB, infra.IDGenSVC, e.resourceEventBus)
 	modelMgrSVC := modelmgr.InitService(infra.ModelMgr, infra.TOSClient)
@@ -176,6 +191,7 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 		promptSVC:    promptSVC,
 		templateSVC:  templateSVC,
 		openAuthSVC:  openAuthSVC,
+		uploadSVC:    uploadSVC,
 	}, nil
 }
 
@@ -188,7 +204,9 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 
 	memorySVC := memory.InitService(basicServices.toMemoryServiceComponents())
 
-	knowledgeSVC, err := knowledge.InitService(basicServices.toKnowledgeServiceComponents(memorySVC))
+	knowledgeSVC, err := knowledge.InitService(ctx,
+		basicServices.toKnowledgeServiceComponents(memorySVC),
+		basicServices.eventbus.resourceEventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -252,14 +270,19 @@ func (b *basicServices) toPluginServiceComponents() *plugin.ServiceComponents {
 
 func (b *basicServices) toKnowledgeServiceComponents(memoryService *memory.MemoryApplicationServices) *knowledge.ServiceComponents {
 	return &knowledge.ServiceComponents{
-		DB:       b.infra.DB,
-		IDGenSVC: b.infra.IDGenSVC,
-		Storage:  b.infra.TOSClient,
-		RDB:      memoryService.RDBDomainSVC,
-		ImageX:   b.infra.ImageXClient,
-		ES:       b.infra.ESClient,
-		EventBus: b.eventbus.resourceEventBus,
-		CacheCli: b.infra.CacheCli,
+		DB:                  b.infra.DB,
+		IDGen:               b.infra.IDGenSVC,
+		RDB:                 memoryService.RDBDomainSVC,
+		Producer:            b.infra.KnowledgeEventProducer,
+		SearchStoreManagers: b.infra.SearchStoreManagers,
+		ParseManager:        b.infra.ParserManager,
+		Storage:             b.infra.TOSClient,
+		Rewriter:            b.infra.Rewriter,
+		Reranker:            b.infra.Reranker,
+		NL2Sql:              b.infra.NL2SQL,
+		OCR:                 b.infra.OCR,
+		CacheCli:            b.infra.CacheCli,
+		ModelFactory:        chatmodel.NewDefaultFactory(),
 	}
 }
 
@@ -276,19 +299,19 @@ func (b *basicServices) toMemoryServiceComponents() *memory.ServiceComponents {
 
 func (b *basicServices) toWorkflowServiceComponents(pluginSVC *plugin.PluginApplicationService, memorySVC *memory.MemoryApplicationServices, knowledgeSVC *knowledge.KnowledgeApplicationService) *workflow.ServiceComponents {
 	return &workflow.ServiceComponents{
-		IDGen:              b.infra.IDGenSVC,
-		DB:                 b.infra.DB,
-		Cache:              b.infra.CacheCli,
-		Tos:                b.infra.TOSClient,
-		ImageX:             b.infra.ImageXClient,
-		DatabaseDomainSVC:  memorySVC.DatabaseDomainSVC,
-		VariablesDomainSVC: memorySVC.VariablesDomainSVC,
-		PluginDomainSVC:    pluginSVC.DomainSVC,
-		KnowledgeDomainSVC: knowledgeSVC.DomainSVC,
-		ModelManager:       b.infra.ModelMgr,
-		DomainNotifier:     b.eventbus.resourceEventBus,
-		CPStore:            checkpoint.NewRedisStore(b.infra.CacheCli),
-		CodeRunner:         b.infra.CodeRunner,
+		IDGen:                    b.infra.IDGenSVC,
+		DB:                       b.infra.DB,
+		Cache:                    b.infra.CacheCli,
+		Tos:                      b.infra.TOSClient,
+		ImageX:                   b.infra.ImageXClient,
+		DatabaseDomainSVC:        memorySVC.DatabaseDomainSVC,
+		VariablesDomainSVC:       memorySVC.VariablesDomainSVC,
+		PluginDomainSVC:          pluginSVC.DomainSVC,
+		KnowledgeDomainSVC:       knowledgeSVC.DomainSVC,
+		DomainNotifier:           b.eventbus.resourceEventBus,
+		CPStore:                  checkpoint.NewRedisStore(b.infra.CacheCli),
+		CodeRunner:               b.infra.CodeRunner,
+		WorkflowBuildInChatModel: b.infra.WorkflowBuildInChatModel,
 	}
 }
 

@@ -24,8 +24,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/database"
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/database/databasemock"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/database"
+	workflowModel "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/workflow"
+	crossdatabase "github.com/coze-dev/coze-studio/backend/crossdomain/contract/database"
+	"github.com/coze-dev/coze-studio/backend/crossdomain/contract/database/databasemock"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/execute"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/schema"
@@ -59,33 +61,32 @@ func TestCustomSQL_Execute(t *testing.T) {
 		validate: func(req *database.CustomSQLRequest) {
 			assert.Equal(t, int64(111), req.DatabaseInfoID)
 			ps := []database.SQLParam{
-				{Value: "v1_value"},
 				{Value: "v2_value"},
 				{Value: "v3_value"},
+				{Value: "1"},
 			}
 			assert.Equal(t, ps, req.Params)
-			assert.Equal(t, "select * from v1 where v1 = ? and v2 = ? and v3 = ?", req.SQL)
+			assert.Equal(t, "select * from v1 where v1 = v1_value and v2 = ? and v3 = ? and v4 = ?", req.SQL)
 		},
 	}
 
 	defer mockey.Mock(execute.GetExeCtx).Return(&execute.Context{
 		RootCtx: execute.RootCtx{
-			ExeCfg: vo.ExecuteConfig{
-				Mode:     vo.ExecuteModeDebug,
+			ExeCfg: workflowModel.ExecuteConfig{
+				Mode:     workflowModel.ExecuteModeDebug,
 				Operator: 123,
-				BizType:  vo.BizTypeWorkflow,
+				BizType:  workflowModel.BizTypeWorkflow,
 			},
 		},
 	}).Build().UnPatch()
 
-	mockDatabaseOperator := databasemock.NewMockDatabaseOperator(ctrl)
+	mockDatabaseOperator := databasemock.NewMockDatabase(ctrl)
 	mockDatabaseOperator.EXPECT().Execute(gomock.Any(), gomock.Any()).DoAndReturn(mockSQLer.Execute()).AnyTimes()
-
-	defer mockey.Mock(database.GetDatabaseOperator).Return(mockDatabaseOperator).Build().UnPatch()
+	crossdatabase.SetDefaultSVC(mockDatabaseOperator)
 
 	cfg := &CustomSQLConfig{
 		DatabaseInfoID: 111,
-		SQLTemplate:    "select * from v1 where v1 = {{v1}} and v2 = '{{v2}}' and v3 = `{{v3}}`",
+		SQLTemplate:    "select * from v1 where v1 = {{v1}} and v2 = '{{v2}}' and v3 = `{{v3}}` and v4 = '{{v4}}'",
 	}
 
 	c1, err := cfg.Build(context.Background(), &schema.NodeSchema{
@@ -103,6 +104,7 @@ func TestCustomSQL_Execute(t *testing.T) {
 		"v1": "v1_value",
 		"v2": "v2_value",
 		"v3": "v3_value",
+		"v4": true,
 	})
 
 	assert.Nil(t, err)

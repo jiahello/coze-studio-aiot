@@ -24,12 +24,14 @@ import (
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
 
-	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/plugin"
+	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
 	plugin_develop_common "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop/common"
+	pluginModel "github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin/model"
+	"github.com/coze-dev/coze-studio/backend/domain/plugin/dto"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/internal/dal/model"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/internal/dal/query"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/idgen"
+	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/slices"
 )
 
@@ -48,7 +50,7 @@ type PluginVersionDAO struct {
 type pluginVersionPO model.PluginVersion
 
 func (p pluginVersionPO) ToDO() *entity.PluginInfo {
-	return entity.NewPluginInfo(&plugin.PluginInfo{
+	return entity.NewPluginInfo(&pluginModel.PluginInfo{
 		ID:          p.PluginID,
 		SpaceID:     p.SpaceID,
 		APPID:       &p.AppID,
@@ -61,6 +63,8 @@ func (p pluginVersionPO) ToDO() *entity.PluginInfo {
 		VersionDesc: &p.VersionDesc,
 		Manifest:    p.Manifest,
 		OpenapiDoc:  p.OpenapiDoc,
+		Source:      bot_common.PluginFromPtr(bot_common.PluginFrom(p.Source)),
+		Extra:       p.Ext,
 	})
 }
 
@@ -109,7 +113,7 @@ func (p *PluginVersionDAO) Get(ctx context.Context, pluginID int64, version stri
 	return plugin, true, nil
 }
 
-func (p *PluginVersionDAO) MGet(ctx context.Context, vPlugins []entity.VersionPlugin, opt *PluginSelectedOption) (plugins []*entity.PluginInfo, err error) {
+func (p *PluginVersionDAO) MGet(ctx context.Context, vPlugins []pluginModel.VersionPlugin, opt *PluginSelectedOption) (plugins []*entity.PluginInfo, err error) {
 	plugins = make([]*entity.PluginInfo, 0, len(vPlugins))
 
 	table := p.query.PluginVersion
@@ -148,7 +152,7 @@ func (p *PluginVersionDAO) MGet(ctx context.Context, vPlugins []entity.VersionPl
 	return plugins, nil
 }
 
-func (p *PluginVersionDAO) ListVersions(ctx context.Context, pluginID int64, pageInfo entity.PageInfo) (plugins []*entity.PluginInfo, total int64, err error) {
+func (p *PluginVersionDAO) ListVersions(ctx context.Context, pluginID int64, pageInfo dto.PageInfo) (plugins []*entity.PluginInfo, total int64, err error) {
 	table := p.query.PluginVersion
 
 	offset := (pageInfo.Page - 1) * pageInfo.Size

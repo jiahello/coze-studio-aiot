@@ -83,11 +83,17 @@ struct ShortMemoryPolicy {
     2: optional i32         HistoryRound (api.body="history_round"), // Number of rounds of context band
 }
 
+enum PluginFrom {
+    Default = 0
+    FromSaas = 1
+}
+
 struct PluginInfo {
     1: optional i64 PluginId (agw.js_conv="str", api.js_conv="true", api.body="plugin_id"), // Plugin ID
     2: optional i64 ApiId    (agw.js_conv="str", api.js_conv="true", api.body="api_id")   , // api Id
     3: optional string ApiName (api.body="api_name")   , // API name O project
 
+    99: optional PluginFrom PluginFrom  (api.body="plugin_from"),
     100: optional i64 ApiVersionMs (agw.js_conv="str", api.js_conv="true", api.body="api_version_ms"), // api version
 }
 
@@ -487,10 +493,26 @@ struct ShortcutCommandComponent { // Panel parameters
     7 : bool is_hide // Whether to hide or not to show, the shortcut command of the online bot tool type does not return the component with hide = true
 }
 
+struct ShortcutToolParam {
+	1: string name
+	2: bool is_required
+	3: string description
+	4: string type
+	5: string default_value
+	6: bool is_refer_component
+}
+
 struct ShortcutCommandToolInfo {
     1: string name //
     2: string type // Tool type workflow plugin
+    3: optional i64 plugin_id (api.js_conv="true")
+    4: optional string plugin_api_name
+    5: optional i64 workflow_id (api.js_conv="true")
+    6: optional list<ShortcutToolParam> params
 }
+typedef string ShortcutSendType
+const ShortcutSendType ShortcutSendTypeQuery = 'query'
+const ShortcutSendType ShortcutSendTypePanel = 'panel'
 
 struct ShortcutCommandInfo {
     1: i64 id (api.js_conv="true") // Quick Command ID
@@ -502,6 +524,8 @@ struct ShortcutCommandInfo {
     7: optional list<ShortcutCommandComponent> components // Component list (parameter list)
     8: optional ShortcutCommandToolInfo tool // Tool information
     9: optional i64 agent_id (api.js_conv="true") //When the multi instruction is executed by which node, it will not be returned without configuration
+    10: optional ShortcutSendType send_type // chatsdk used
+    11: optional string card_schema // chatsdk schema
 }
 
 

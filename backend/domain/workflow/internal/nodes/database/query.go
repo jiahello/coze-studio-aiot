@@ -22,7 +22,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/database"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/database"
+	crossdatabase "github.com/coze-dev/coze-studio/backend/crossdomain/contract/database"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/canvas/convert"
@@ -114,7 +115,6 @@ func (q *QueryConfig) Build(_ context.Context, ns *schema.NodeSchema, _ ...schem
 		outputTypes:    ns.OutputTypes,
 		clauseGroup:    q.ClauseGroup,
 		limit:          q.Limit,
-		op:             database.GetDatabaseOperator(),
 	}, nil
 }
 
@@ -125,7 +125,6 @@ type Query struct {
 	outputTypes    map[string]*vo.TypeInfo
 	clauseGroup    *database.ClauseGroup
 	limit          int64
-	op             database.DatabaseOperator
 }
 
 func (ds *Query) Invoke(ctx context.Context, in map[string]any) (map[string]any, error) {
@@ -146,7 +145,7 @@ func (ds *Query) Invoke(ctx context.Context, in map[string]any) (map[string]any,
 
 	req.ConditionGroup = conditionGroup
 
-	response, err := ds.op.Query(ctx, req)
+	response, err := crossdatabase.DefaultSVC().Query(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +161,7 @@ func notNeedTakeMapValue(op database.Operator) bool {
 	return op == database.OperatorIsNull || op == database.OperatorIsNotNull
 }
 
-func (ds *Query) ToCallbackInput(ctx context.Context, in map[string]any) (map[string]any, error) {
+func (ds *Query) ToCallbackInput(ctx context.Context, in map[string]any) (*nodes.StructuredCallbackInput, error) {
 	conditionGroup, err := convertClauseGroupToConditionGroup(ctx, ds.clauseGroup, in)
 	if err != nil {
 		return nil, err
@@ -171,7 +170,8 @@ func (ds *Query) ToCallbackInput(ctx context.Context, in map[string]any) (map[st
 	return ds.toDatabaseQueryCallbackInput(conditionGroup)
 }
 
-func (ds *Query) toDatabaseQueryCallbackInput(conditionGroup *database.ConditionGroup) (map[string]any, error) {
+func (ds *Query) toDatabaseQueryCallbackInput(conditionGroup *database.ConditionGroup) (
+	*nodes.StructuredCallbackInput, error) {
 	result := make(map[string]any)
 
 	databaseID := ds.databaseInfoID
@@ -209,7 +209,9 @@ func (ds *Query) toDatabaseQueryCallbackInput(conditionGroup *database.Condition
 		"orderByList": OrderList,
 	}
 
-	return result, nil
+	return &nodes.StructuredCallbackInput{
+		Input: result,
+	}, nil
 }
 
 type ConditionItem struct {

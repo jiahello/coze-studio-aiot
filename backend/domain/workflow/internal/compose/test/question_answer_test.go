@@ -36,9 +36,10 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
+	model "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/modelmgr"
+	crossmodelmgr "github.com/coze-dev/coze-studio/backend/crossdomain/contract/modelmgr"
+	mockmodel "github.com/coze-dev/coze-studio/backend/crossdomain/contract/modelmgr/modelmock"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow"
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/model"
-	mockmodel "github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/model/modelmock"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	compose2 "github.com/coze-dev/coze-studio/backend/domain/workflow/internal/compose"
@@ -47,10 +48,10 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/nodes/qa"
 	repo2 "github.com/coze-dev/coze-studio/backend/domain/workflow/internal/repo"
 	schema2 "github.com/coze-dev/coze-studio/backend/domain/workflow/internal/schema"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/cache/redis"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/checkpoint"
-	mock "github.com/coze-dev/coze-studio/backend/internal/mock/infra/contract/idgen"
-	storageMock "github.com/coze-dev/coze-studio/backend/internal/mock/infra/contract/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/cache/impl/redis"
+	"github.com/coze-dev/coze-studio/backend/infra/checkpoint"
+	mock "github.com/coze-dev/coze-studio/backend/internal/mock/infra/idgen"
+	storageMock "github.com/coze-dev/coze-studio/backend/internal/mock/infra/storage"
 
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
@@ -61,7 +62,7 @@ func TestQuestionAnswer(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		mockModelManager := mockmodel.NewMockManager(ctrl)
-		mockey.Mock(model.GetManager).Return(mockModelManager).Build()
+		mockey.Mock(crossmodelmgr.DefaultSVC).Return(mockModelManager).Build()
 
 		accessKey := os.Getenv("OPENAI_API_KEY")
 		baseURL := os.Getenv("OPENAI_BASE_URL")
@@ -97,13 +98,24 @@ func TestQuestionAnswer(t *testing.T) {
 		defer s.Close()
 
 		redisClient := redis.NewWithAddrAndPassword(s.Addr(), "")
-
+		var oneChatModel = chatModel
+		if oneChatModel == nil {
+			oneChatModel = &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+					return &schema.Message{
+						Role:    schema.Assistant,
+						Content: "-1",
+					}, nil
+				},
+			}
+		}
 		mockIDGen := mock.NewMockIDGenerator(ctrl)
 		mockIDGen.EXPECT().GenID(gomock.Any()).Return(time.Now().UnixNano(), nil).AnyTimes()
 		mockTos := storageMock.NewMockStorage(ctrl)
 		mockTos.EXPECT().GetObjectUrl(gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil).AnyTimes()
-		repo := repo2.NewRepository(mockIDGen, db, redisClient, mockTos,
-			checkpoint.NewRedisStore(redisClient), nil)
+		repo, _ := repo2.NewRepository(mockIDGen, db, redisClient, mockTos,
+			checkpoint.NewRedisStore(redisClient), oneChatModel, nil)
+
 		mockey.Mock(workflow.GetRepository).Return(repo).Build()
 
 		t.Run("answer directly, no structured output", func(t *testing.T) {
@@ -183,11 +195,12 @@ func TestQuestionAnswer(t *testing.T) {
 
 			info, existed := compose.ExtractInterruptInfo(err)
 			assert.True(t, existed)
-			assert.Equal(t, "what's your name?", info.State.(*compose2.State).Questions[ns.Key][0].Question)
+			assert.Equal(t, "what's your name?", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.QuestionKey].(string))
 
 			answer := "my name is eino"
 			stateModifier := func(ctx context.Context, path compose.NodePath, state any) error {
-				state.(*compose2.State).Answers[ns.Key] = append(state.(*compose2.State).Answers[ns.Key], answer)
+				state.(*compose2.State).ResumeData[ns.Key] = answer
 				return nil
 			}
 			out, err := wf.Runner.Invoke(context.Background(), nil, compose.WithCheckPointID(checkPointID), compose.WithStateModifier(stateModifier))
@@ -346,13 +359,16 @@ func TestQuestionAnswer(t *testing.T) {
 
 			info, existed := compose.ExtractInterruptInfo(err)
 			assert.True(t, existed)
-			assert.Equal(t, "what's would you make in Coze?", info.State.(*compose2.State).Questions[ns.Key][0].Question)
-			assert.Equal(t, "make agent", info.State.(*compose2.State).Questions[ns.Key][0].Choices[0])
-			assert.Equal(t, "make workflow", info.State.(*compose2.State).Questions[ns.Key][0].Choices[1])
+			assert.Equal(t, "what's would you make in Coze?", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.QuestionKey].(string))
+			assert.Equal(t, "make agent", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.ChoicesKey].([]string)[0])
+			assert.Equal(t, "make workflow", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.ChoicesKey].([]string)[1])
 
 			chosenContent := "I would make all kinds of stuff"
 			stateModifier := func(ctx context.Context, path compose.NodePath, state any) error {
-				state.(*compose2.State).Answers[ns.Key] = append(state.(*compose2.State).Answers[ns.Key], chosenContent)
+				state.(*compose2.State).ResumeData[ns.Key] = chosenContent
 				return nil
 			}
 			out, err := wf.Runner.Invoke(context.Background(), nil, compose.WithCheckPointID(checkPointID), compose.WithStateModifier(stateModifier))
@@ -483,13 +499,16 @@ func TestQuestionAnswer(t *testing.T) {
 
 			info, existed := compose.ExtractInterruptInfo(err)
 			assert.True(t, existed)
-			assert.Equal(t, "what's the capital city of China?", info.State.(*compose2.State).Questions[ns.Key][0].Question)
-			assert.Equal(t, "beijing", info.State.(*compose2.State).Questions[ns.Key][0].Choices[0])
-			assert.Equal(t, "shanghai", info.State.(*compose2.State).Questions[ns.Key][0].Choices[1])
+			assert.Equal(t, "what's the capital city of China?", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.QuestionKey].(string))
+			assert.Equal(t, "beijing", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.ChoicesKey].([]string)[0])
+			assert.Equal(t, "shanghai", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.ChoicesKey].([]string)[1])
 
 			chosenContent := "beijing"
 			stateModifier := func(ctx context.Context, path compose.NodePath, state any) error {
-				state.(*compose2.State).Answers[ns.Key] = append(state.(*compose2.State).Answers[ns.Key], chosenContent)
+				state.(*compose2.State).ResumeData[ns.Key] = chosenContent
 				return nil
 			}
 			out, err := wf.Runner.Invoke(context.Background(), nil, compose.WithCheckPointID(checkPointID), compose.WithStateModifier(stateModifier))
@@ -644,12 +663,13 @@ func TestQuestionAnswer(t *testing.T) {
 
 			info, existed := compose.ExtractInterruptInfo(err)
 			assert.True(t, existed)
-			assert.Equal(t, "what's your name?", info.State.(*compose2.State).Questions["qa_node_key"][0].Question)
+			assert.Equal(t, "what's your name?", info.State.(*compose2.State).
+				IntermediateResult[ns.Key][qa.QuestionsKey].([]map[string]any)[0][qa.QuestionKey].(string))
 
 			qaCount++
 			answer := "my name is eino"
 			stateModifier := func(ctx context.Context, path compose.NodePath, state any) error {
-				state.(*compose2.State).Answers[ns.Key] = append(state.(*compose2.State).Answers[ns.Key], answer)
+				state.(*compose2.State).ResumeData[ns.Key] = answer
 				return nil
 			}
 			_, err = wf.Runner.Invoke(ctx, map[string]any{}, compose.WithCheckPointID(checkPointID), compose.WithStateModifier(stateModifier))
@@ -660,7 +680,7 @@ func TestQuestionAnswer(t *testing.T) {
 			qaCount++
 			answer = "my age is 1 years old"
 			stateModifier = func(ctx context.Context, path compose.NodePath, state any) error {
-				state.(*compose2.State).Answers[ns.Key] = append(state.(*compose2.State).Answers[ns.Key], answer)
+				state.(*compose2.State).ResumeData[ns.Key] = answer
 				return nil
 			}
 			out, err := wf.Runner.Invoke(ctx, map[string]any{}, compose.WithCheckPointID(checkPointID), compose.WithStateModifier(stateModifier))

@@ -23,9 +23,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coze-dev/coze-studio/backend/types/consts"
+
 	einoCompose "github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	model "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/workflow"
 	wf "github.com/coze-dev/coze-studio/backend/domain/workflow"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
@@ -37,15 +40,17 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ternary"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/pkg/safego"
+	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
 
 type WorkflowRunner struct {
-	basic        *entity.WorkflowBasic
-	input        string
-	resumeReq    *entity.ResumeRequest
-	schema       *schema2.WorkflowSchema
-	streamWriter *schema.StreamWriter[*entity.Message]
-	config       vo.ExecuteConfig
+	basic     *entity.WorkflowBasic
+	input     string
+	resumeReq *entity.ResumeRequest
+	schema    *schema2.WorkflowSchema
+	sw        *schema.StreamWriter[*entity.Message]
+	container *execute.StreamContainer
+	config    model.ExecuteConfig
 
 	executeID      int64
 	eventChan      chan *execute.Event
@@ -77,19 +82,25 @@ func WithStreamWriter(sw *schema.StreamWriter[*entity.Message]) WorkflowRunnerOp
 	}
 }
 
-func NewWorkflowRunner(b *entity.WorkflowBasic, sc *schema2.WorkflowSchema, config vo.ExecuteConfig, opts ...WorkflowRunnerOption) *WorkflowRunner {
+func NewWorkflowRunner(b *entity.WorkflowBasic, sc *schema2.WorkflowSchema, config model.ExecuteConfig, opts ...WorkflowRunnerOption) *WorkflowRunner {
 	options := &workflowRunOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
 
+	var container *execute.StreamContainer
+	if options.streamWriter != nil {
+		container = execute.NewStreamContainer(options.streamWriter)
+	}
+
 	return &WorkflowRunner{
-		basic:        b,
-		input:        options.input,
-		resumeReq:    options.resumeReq,
-		schema:       sc,
-		streamWriter: options.streamWriter,
-		config:       config,
+		basic:     b,
+		input:     options.input,
+		resumeReq: options.resumeReq,
+		schema:    sc,
+		sw:        options.streamWriter,
+		container: container,
+		config:    config,
 	}
 }
 
@@ -107,14 +118,16 @@ func (r *WorkflowRunner) Prepare(ctx context.Context) (
 		resumeReq = r.resumeReq
 		wb        = r.basic
 		sc        = r.schema
-		sw        = r.streamWriter
+		sw        = r.sw
+		container = r.container
 		config    = r.config
 	)
 
 	if r.resumeReq == nil {
 		executeID, err = repo.GenID(ctx)
 		if err != nil {
-			return ctx, 0, nil, nil, fmt.Errorf("failed to generate workflow execute ID: %w", err)
+			return ctx, 0, nil, nil, vo.WrapError(errno.ErrIDGenError,
+				fmt.Errorf("failed to generate workflow execute ID: %w", err))
 		}
 	} else {
 		executeID = resumeReq.ExecuteID
@@ -147,7 +160,16 @@ func (r *WorkflowRunner) Prepare(ctx context.Context) (
 	r.eventChan = eventChan
 	r.interruptEvent = interruptEvent
 
-	ctx, composeOpts, err := r.designateOptions(ctx)
+	if container != nil {
+		go container.PipeAll()
+		defer func() {
+			if err != nil {
+				container.Done()
+			}
+		}()
+	}
+
+	composeOpts, err := r.designateOptions(ctx)
 	if err != nil {
 		return ctx, 0, nil, nil, err
 	}
@@ -237,7 +259,7 @@ func (r *WorkflowRunner) Prepare(ctx context.Context) (
 
 	if interruptEvent == nil {
 		var logID string
-		logID, _ = ctx.Value("log-id").(string)
+		logID, _ = ctx.Value(consts.CtxLogIDKey).(string)
 
 		wfExec := &entity.WorkflowExecution{
 			ID:                     executeID,
@@ -262,7 +284,7 @@ func (r *WorkflowRunner) Prepare(ctx context.Context) (
 	cancelCtx, cancelFn := context.WithCancel(ctx)
 	var timeoutFn context.CancelFunc
 	if s := execute.GetStaticConfig(); s != nil {
-		timeout := ternary.IFElse(config.TaskType == vo.TaskTypeBackground, s.BackgroundRunTimeout, s.ForegroundRunTimeout)
+		timeout := ternary.IFElse(config.TaskType == model.TaskTypeBackground, s.BackgroundRunTimeout, s.ForegroundRunTimeout)
 		if timeout > 0 {
 			cancelCtx, timeoutFn = context.WithTimeout(cancelCtx, timeout)
 		}
@@ -276,8 +298,8 @@ func (r *WorkflowRunner) Prepare(ctx context.Context) (
 			}
 		}()
 		defer func() {
-			if sw != nil {
-				sw.Close()
+			if container != nil {
+				container.Done()
 			}
 		}()
 

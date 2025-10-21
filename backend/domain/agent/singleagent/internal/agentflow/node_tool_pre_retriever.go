@@ -20,17 +20,15 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 
-	"github.com/cloudwego/eino/schema"
-
 	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/agentrun"
-	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/plugin"
+	workflowModel "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/workflow"
 	crossplugin "github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin"
+	"github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin/consts"
+	"github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin/model"
 	crossworkflow "github.com/coze-dev/coze-studio/backend/crossdomain/contract/workflow"
-	pluginEntity "github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
-	"github.com/coze-dev/coze-studio/backend/domain/plugin/service"
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
@@ -53,26 +51,27 @@ func (pr *toolPreCallConf) toolPreRetrieve(ctx context.Context, ar *AgentRequest
 		switch item.Type {
 		case agentrun.ToolTypePlugin:
 
-			etr := &service.ExecuteToolRequest{
+			etr := &model.ExecuteToolRequest{
 				UserID:          ar.UserID,
 				ExecDraftTool:   false,
 				PluginID:        item.PluginID,
 				ToolID:          item.ToolID,
 				ArgumentsInJson: item.Arguments,
-				ExecScene: func(isDraft bool) plugin.ExecuteScene {
+				ExecScene: func(isDraft bool) consts.ExecuteScene {
 					if isDraft {
-						return plugin.ExecSceneOfDraftAgent
+						return consts.ExecSceneOfDraftAgent
 					} else {
-						return plugin.ExecSceneOfOnlineAgent
+						return consts.ExecSceneOfOnlineAgent
 					}
 				}(ar.Identity.IsDraft),
+				PluginFrom: item.PluginFrom,
 			}
 
-			opts := []pluginEntity.ExecuteToolOpt{
-				plugin.WithInvalidRespProcessStrategy(plugin.InvalidResponseProcessStrategyOfReturnDefault),
-				plugin.WithProjectInfo(&plugin.ProjectInfo{
+			opts := []model.ExecuteToolOpt{
+				model.WithInvalidRespProcessStrategy(consts.InvalidResponseProcessStrategyOfReturnDefault),
+				model.WithProjectInfo(&model.ProjectInfo{
 					ProjectID:      ar.Identity.AgentID,
-					ProjectType:    plugin.ProjectTypeOfAgent,
+					ProjectType:    consts.ProjectTypeOfAgent,
 					ProjectVersion: ptr.Of(ar.Identity.Version),
 				}),
 			}
@@ -89,7 +88,7 @@ func (pr *toolPreCallConf) toolPreRetrieve(ctx context.Context, ar *AgentRequest
 				logs.CtxErrorf(ctx, "Failed to unmarshal json arguments: %s", item.Arguments)
 				return nil, err
 			}
-			execResp, _, err := crossworkflow.DefaultSVC().SyncExecuteWorkflow(ctx, vo.ExecuteConfig{
+			execResp, _, err := crossworkflow.DefaultSVC().SyncExecuteWorkflow(ctx, workflowModel.ExecuteConfig{
 				ID:           item.PluginID,
 				ConnectorID:  ar.Identity.ConnectorID,
 				ConnectorUID: ar.UserID,

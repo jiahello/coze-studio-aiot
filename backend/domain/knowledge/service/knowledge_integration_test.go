@@ -35,21 +35,23 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/internal/convert"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/internal/dal/model"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document/nl2sql"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document/parser"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document/searchstore"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/storage"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/cache/redis"
-	sses "github.com/coze-dev/coze-studio/backend/infra/impl/document/searchstore/elasticsearch"
-	ssmilvus "github.com/coze-dev/coze-studio/backend/infra/impl/document/searchstore/milvus"
-	hembed "github.com/coze-dev/coze-studio/backend/infra/impl/embedding/http"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/es"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/eventbus"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/idgen"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/mysql"
-	rdbservice "github.com/coze-dev/coze-studio/backend/infra/impl/rdb"
-	"github.com/coze-dev/coze-studio/backend/infra/impl/storage/minio"
+	"github.com/coze-dev/coze-studio/backend/infra/cache/impl/redis"
+	"github.com/coze-dev/coze-studio/backend/infra/document"
+	"github.com/coze-dev/coze-studio/backend/infra/document/nl2sql"
+	"github.com/coze-dev/coze-studio/backend/infra/document/parser"
+	"github.com/coze-dev/coze-studio/backend/infra/document/parser/impl/builtin"
+	"github.com/coze-dev/coze-studio/backend/infra/document/rerank/impl/rrf"
+	"github.com/coze-dev/coze-studio/backend/infra/document/searchstore"
+	sses "github.com/coze-dev/coze-studio/backend/infra/document/searchstore/impl/elasticsearch"
+	ssmilvus "github.com/coze-dev/coze-studio/backend/infra/document/searchstore/impl/milvus"
+	hembed "github.com/coze-dev/coze-studio/backend/infra/embedding/impl/http"
+	"github.com/coze-dev/coze-studio/backend/infra/es/impl/es"
+	eventbus "github.com/coze-dev/coze-studio/backend/infra/eventbus/impl"
+	"github.com/coze-dev/coze-studio/backend/infra/idgen/impl/idgen"
+	"github.com/coze-dev/coze-studio/backend/infra/orm/impl/mysql"
+	rdbservice "github.com/coze-dev/coze-studio/backend/infra/rdb/impl/rdb"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/minio"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
@@ -169,10 +171,10 @@ func (suite *KnowledgeTestSuite) SetupSuite() {
 		RDB:                 rdbService,
 		Producer:            knowledgeProducer,
 		SearchStoreManagers: mgrs,
-		ParseManager:        nil, // default builtin
+		ParseManager:        builtin.NewManager(tosClient, nil, nil), // default builtin
 		Storage:             tosClient,
 		Rewriter:            nil,
-		Reranker:            nil, // default rrf
+		Reranker:            rrf.NewRRFReranker(0), // default rrf
 		EnableCompactTable:  ptr.Of(true),
 	})
 

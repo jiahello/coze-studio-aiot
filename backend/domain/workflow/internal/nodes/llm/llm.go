@@ -34,18 +34,22 @@ import (
 	callbacks2 "github.com/cloudwego/eino/utils/callbacks"
 	"golang.org/x/exp/maps"
 
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/knowledge"
+	crossmodel "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/modelmgr"
+	workflowModel "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/workflow"
 	workflow3 "github.com/coze-dev/coze-studio/backend/api/model/workflow"
+	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/contract/knowledge"
+	crossmessage "github.com/coze-dev/coze-studio/backend/crossdomain/contract/message"
+	crossmodelmgr "github.com/coze-dev/coze-studio/backend/crossdomain/contract/modelmgr"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow"
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/knowledge"
-	crossmodel "github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/model"
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/plugin"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/canvas/convert"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/execute"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/nodes"
 	schema2 "github.com/coze-dev/coze-studio/backend/domain/workflow/internal/schema"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/modelmgr"
+	wrapPlugin "github.com/coze-dev/coze-studio/backend/domain/workflow/plugin"
+	"github.com/coze-dev/coze-studio/backend/infra/modelmgr"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/slices"
@@ -54,6 +58,10 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
+
+type contextKey string
+
+const chatHistoryKey contextKey = "chatHistory"
 
 type Format int
 
@@ -91,9 +99,9 @@ const (
 	ReasoningOutputKey = "reasoning_content"
 )
 
-const knowledgeUserPromptTemplate = `根据引用的内容回答问题: 
- 1.如果引用的内容里面包含 <img src=""> 的标签, 标签里的 src 字段表示图片地址, 需要在回答问题的时候展示出去, 输出格式为"![图片名称](图片地址)" 。 
- 2.如果引用的内容不包含 <img src=""> 的标签, 你回答问题时不需要展示图片 。 
+const knowledgeUserPromptTemplate = `根据引用的内容回答问题:
+ 1.如果引用的内容里面包含 <img src=""> 的标签, 标签里的 src 字段表示图片地址, 需要在回答问题的时候展示出去, 输出格式为"![图片名称](图片地址)" 。
+ 2.如果引用的内容不包含 <img src=""> 的标签, 你回答问题时不需要展示图片 。
 例如：
   如果内容为<img src="https://example.com/image.jpg">一只小猫，你的输出应为：![一只小猫](https://example.com/image.jpg)。
   如果内容为<img src="https://example.com/image1.jpg">一只小猫 和 <img src="https://example.com/image2.jpg">一只小狗 和 <img src="https://example.com/image3.jpg">一只小牛，你的输出应为：![一只小猫](https://example.com/image1.jpg) 和 ![一只小狗](https://example.com/image2.jpg) 和 ![一只小牛](https://example.com/image3.jpg)
@@ -139,6 +147,7 @@ const (
 	knowledgeUserPromptTemplateKey = "knowledge_user_prompt_prefix"
 	templateNodeKey                = "template"
 	llmNodeKey                     = "llm"
+	reactGraphName                 = "workflow_llm_react_agent"
 	outputConvertNodeKey           = "output_convert"
 )
 
@@ -157,18 +166,19 @@ type RetrievalStrategy struct {
 
 type KnowledgeRecallConfig struct {
 	ChatModel                model.BaseChatModel
-	Retriever                knowledge.KnowledgeOperator
 	RetrievalStrategy        *RetrievalStrategy
 	SelectedKnowledgeDetails []*knowledge.KnowledgeDetail
 }
 
 type Config struct {
-	SystemPrompt    string
-	UserPrompt      string
-	OutputFormat    Format
-	LLMParams       *crossmodel.LLMParams
-	FCParam         *vo.FCParam
-	BackupLLMParams *crossmodel.LLMParams
+	SystemPrompt                      string
+	UserPrompt                        string
+	OutputFormat                      Format
+	LLMParams                         *crossmodel.LLMParams
+	FCParam                           *vo.FCParam
+	BackupLLMParams                   *crossmodel.LLMParams
+	ChatHistorySetting                *vo.ChatHistorySetting
+	AssociateStartNodeUserInputFields map[string]struct{}
 }
 
 func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*schema2.NodeSchema, error) {
@@ -197,6 +207,13 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 	c.LLMParams = convertedLLMParam
 	c.SystemPrompt = convertedLLMParam.SystemPrompt
 	c.UserPrompt = convertedLLMParam.Prompt
+
+	if convertedLLMParam.EnableChatHistory {
+		c.ChatHistorySetting = &vo.ChatHistorySetting{
+			EnableChatHistory: true,
+			ChatHistoryRound:  convertedLLMParam.ChatHistoryRound,
+		}
+	}
 
 	var resFormat Format
 	switch convertedLLMParam.ResponseFormat {
@@ -269,6 +286,15 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 		}
 	}
 
+	c.AssociateStartNodeUserInputFields = make(map[string]struct{})
+	for _, info := range ns.InputSources {
+		if len(info.Path) == 1 && info.Source.Ref != nil && info.Source.Ref.FromNodeKey == entity.EntryNodeKey {
+			if compose.FromFieldPath(info.Source.Ref.FromPath).Equals(compose.FromField(vo.UserInputKey)) {
+				c.AssociateStartNodeUserInputFields[info.Path[0]] = struct{}{}
+			}
+		}
+	}
+
 	return ns, nil
 }
 
@@ -316,7 +342,14 @@ func llmParamsToLLMParam(params vo.LLMParam) (*crossmodel.LLMParams, error) {
 		case "systemPrompt":
 			strVal := param.Input.Value.Content.(string)
 			p.SystemPrompt = strVal
-		case "chatHistoryRound", "generationDiversity", "frequencyPenalty", "presencePenalty":
+		case "chatHistoryRound":
+			strVal := param.Input.Value.Content.(string)
+			int64Val, err := strconv.ParseInt(strVal, 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			p.ChatHistoryRound = int64Val
+		case "generationDiversity", "frequencyPenalty", "presencePenalty":
 		// do nothing
 		case "topP":
 			strVal := param.Input.Value.Content.(string)
@@ -326,7 +359,8 @@ func llmParamsToLLMParam(params vo.LLMParam) (*crossmodel.LLMParams, error) {
 			}
 			p.TopP = &floatVar
 		default:
-			return nil, fmt.Errorf("invalid LLMParam name: %s", param.Name)
+			logs.Warnf("encountered unknown param when converting LLM Params, name= %s, "+
+				"value= %v", param.Name, param.Input.Value.Content)
 		}
 	}
 
@@ -360,7 +394,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		knowledgeRecallConfig *KnowledgeRecallConfig
 	)
 
-	chatModel, info, err = crossmodel.GetManager().GetModel(ctx, c.LLMParams)
+	chatModel, info, err = crossmodelmgr.DefaultSVC().GetModel(ctx, c.LLMParams)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +403,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 	if exceptionConf != nil && exceptionConf.MaxRetry > 0 {
 		backupModelParams := c.BackupLLMParams
 		if backupModelParams != nil {
-			fallbackM, fallbackI, err = crossmodel.GetManager().GetModel(ctx, backupModelParams)
+			fallbackM, fallbackI, err = crossmodelmgr.DefaultSVC().GetModel(ctx, backupModelParams)
 			if err != nil {
 				return nil, err
 			}
@@ -398,9 +432,9 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 					workflowToolConfig.OutputParametersConfig = wf.FCSetting.ResponseParameters
 				}
 
-				locator := vo.FromDraft
+				locator := workflowModel.FromDraft
 				if wf.WorkflowVersion != "" {
-					locator = vo.FromSpecificVersion
+					locator = workflowModel.FromSpecificVersion
 				}
 
 				wfTool, err := workflow.GetRepository().WorkflowAsTool(ctx, vo.GetPolicy{
@@ -426,7 +460,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		}
 
 		if fcParams.PluginFCParam != nil {
-			pluginToolsInvokableReq := make(map[int64]*plugin.ToolsInvokableRequest)
+			pluginToolsInvokableReq := make(map[int64]*wrapPlugin.ToolsInvokableRequest)
 			for _, p := range fcParams.PluginFCParam.PluginList {
 				pid, err := strconv.ParseInt(p.PluginID, 10, 64)
 				if err != nil {
@@ -447,18 +481,19 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 				}
 
 				if req, ok := pluginToolsInvokableReq[pid]; ok {
-					req.ToolsInvokableInfo[toolID] = &plugin.ToolsInvokableInfo{
+					req.ToolsInvokableInfo[toolID] = &wrapPlugin.ToolsInvokableInfo{
 						ToolID:                      toolID,
 						RequestAPIParametersConfig:  requestParameters,
 						ResponseAPIParametersConfig: responseParameters,
 					}
 				} else {
-					pluginToolsInfoRequest := &plugin.ToolsInvokableRequest{
-						PluginEntity: plugin.Entity{
+					pluginToolsInfoRequest := &wrapPlugin.ToolsInvokableRequest{
+						PluginEntity: vo.PluginEntity{
 							PluginID:      pid,
 							PluginVersion: ptr.Of(p.PluginVersion),
+							PluginFrom:    p.PluginFrom,
 						},
-						ToolsInvokableInfo: map[int64]*plugin.ToolsInvokableInfo{
+						ToolsInvokableInfo: map[int64]*wrapPlugin.ToolsInvokableInfo{
 							toolID: {
 								ToolID:                      toolID,
 								RequestAPIParametersConfig:  requestParameters,
@@ -472,12 +507,12 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 			}
 			inInvokableTools := make([]tool.BaseTool, 0, len(fcParams.PluginFCParam.PluginList))
 			for _, req := range pluginToolsInvokableReq {
-				toolMap, err := plugin.GetPluginService().GetPluginInvokableTools(ctx, req)
+				toolMap, err := wrapPlugin.GetPluginInvokableTools(ctx, req)
 				if err != nil {
 					return nil, err
 				}
 				for _, t := range toolMap {
-					inInvokableTools = append(inInvokableTools, plugin.NewInvokableTool(t))
+					inInvokableTools = append(inInvokableTools, newInvokableTool(t))
 				}
 			}
 			if len(inInvokableTools) > 0 {
@@ -491,11 +526,9 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 				return nil, fmt.Errorf("workflow builtin chat model for knowledge recall not configured")
 			}
 
-			knowledgeOperator := knowledge.GetKnowledgeOperator()
 			setting := fcParams.KnowledgeFCParam.GlobalSetting
 			knowledgeRecallConfig = &KnowledgeRecallConfig{
 				ChatModel: kwChatModel,
-				Retriever: knowledgeOperator,
 			}
 			searchType, err := toRetrievalSearchType(setting.SearchMode)
 			if err != nil {
@@ -523,7 +556,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 				knowledgeIDs = append(knowledgeIDs, kid)
 			}
 
-			detailResp, err := knowledgeOperator.ListKnowledgeDetail(ctx,
+			detailResp, err := crossknowledge.DefaultSVC().ListKnowledgeDetail(ctx,
 				&knowledge.ListKnowledgeDetailRequest{
 					KnowledgeIDs: knowledgeIDs,
 				})
@@ -534,9 +567,10 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		}
 	}
 
-	g := compose.NewGraph[map[string]any, map[string]any](compose.WithGenLocalState(func(ctx context.Context) (state llmState) {
-		return llmState{}
-	}))
+	g := compose.NewGraph[map[string]any, map[string]any](
+		compose.WithGenLocalState(func(ctx context.Context) (state llmState) {
+			return llmState{}
+		}))
 
 	var hasReasoning bool
 
@@ -587,11 +621,12 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		inputs[knowledgeUserPromptTemplateKey] = &vo.TypeInfo{
 			Type: vo.DataTypeString,
 		}
-		sp := newPromptTpl(schema.System, c.SystemPrompt, inputs, nil)
-		up := newPromptTpl(schema.User, userPrompt, inputs, []string{knowledgeUserPromptTemplateKey})
+		sp := newPromptTpl(schema.System, c.SystemPrompt, inputs)
+		up := newPromptTpl(schema.User, userPrompt, inputs, withReservedKeys([]string{knowledgeUserPromptTemplateKey}), withAssociateUserInputFields(c.AssociateStartNodeUserInputFields))
 		template := newPrompts(sp, up, modelWithInfo)
+		templateWithChatHistory := newPromptsWithChatHistory(template, c.ChatHistorySetting, modelWithInfo)
 
-		_ = g.AddChatTemplateNode(templateNodeKey, template,
+		_ = g.AddChatTemplateNode(templateNodeKey, templateWithChatHistory,
 			compose.WithStatePreHandler(func(ctx context.Context, in map[string]any, state llmState) (map[string]any, error) {
 				for k, v := range state {
 					in[k] = v
@@ -601,10 +636,12 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		_ = g.AddEdge(knowledgeLambdaKey, templateNodeKey)
 
 	} else {
-		sp := newPromptTpl(schema.System, c.SystemPrompt, ns.InputTypes, nil)
-		up := newPromptTpl(schema.User, userPrompt, ns.InputTypes, nil)
+		sp := newPromptTpl(schema.System, c.SystemPrompt, ns.InputTypes)
+		up := newPromptTpl(schema.User, userPrompt, ns.InputTypes, withAssociateUserInputFields(c.AssociateStartNodeUserInputFields))
 		template := newPrompts(sp, up, modelWithInfo)
-		_ = g.AddChatTemplateNode(templateNodeKey, template)
+		templateWithChatHistory := newPromptsWithChatHistory(template, c.ChatHistorySetting, modelWithInfo)
+
+		_ = g.AddChatTemplateNode(templateNodeKey, templateWithChatHistory)
 
 		_ = g.AddEdge(compose.START, templateNodeKey)
 	}
@@ -618,6 +655,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 			ToolCallingModel: m,
 			ToolsConfig:      compose.ToolsNodeConfig{Tools: tools},
 			ModelNodeName:    agentModelName,
+			GraphName:        reactGraphName,
 		}
 
 		if len(toolsReturnDirectly) > 0 {
@@ -633,7 +671,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 		}
 
 		agentNode, opts := reactAgent.ExportGraph()
-		opts = append(opts, compose.WithNodeName("workflow_llm_react_agent"))
+		opts = append(opts, compose.WithNodeName(reactGraphName))
 		_ = g.AddGraphNode(llmNodeKey, agentNode, opts...)
 	} else {
 		_ = g.AddChatModelNode(llmNodeKey, modelWithInfo)
@@ -641,6 +679,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 
 	_ = g.AddEdge(templateNodeKey, llmNodeKey)
 
+	var outputKey string
 	if format == FormatJSON {
 		iConvert := func(ctx context.Context, msg *schema.Message) (map[string]any, error) {
 			return jsonParse(ctx, msg.Content, ns.OutputTypes)
@@ -650,7 +689,6 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 
 		_ = g.AddLambdaNode(outputConvertNodeKey, convertNode)
 	} else {
-		var outputKey string
 		if len(ns.OutputTypes) != 1 && len(ns.OutputTypes) != 2 {
 			panic("impossible")
 		}
@@ -729,10 +767,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 	_ = g.AddEdge(llmNodeKey, outputConvertNodeKey)
 	_ = g.AddEdge(outputConvertNodeKey, compose.END)
 
-	requireCheckpoint := false
-	if len(tools) > 0 {
-		requireCheckpoint = true
-	}
+	requireCheckpoint := c.RequireCheckpoint()
 
 	var compileOpts []compose.GraphCompileOption
 	if requireCheckpoint {
@@ -746,10 +781,13 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 	}
 
 	llm := &LLM{
-		r:                 r,
-		outputFormat:      format,
-		requireCheckpoint: requireCheckpoint,
-		fullSources:       ns.FullSources,
+		r:                  r,
+		outputFormat:       format,
+		requireCheckpoint:  requireCheckpoint,
+		fullSources:        ns.FullSources,
+		chatHistorySetting: c.ChatHistorySetting,
+		nodeKey:            ns.Key,
+		outputKey:          outputKey,
 	}
 
 	return llm, nil
@@ -757,8 +795,16 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 
 func (c *Config) RequireCheckpoint() bool {
 	if c.FCParam != nil {
-		if c.FCParam.WorkflowFCParam != nil || c.FCParam.PluginFCParam != nil {
-			return true
+		if c.FCParam.WorkflowFCParam != nil {
+			if len(c.FCParam.WorkflowFCParam.WorkflowList) > 0 {
+				return true
+			}
+		}
+
+		if c.FCParam.PluginFCParam != nil {
+			if len(c.FCParam.PluginFCParam.PluginList) > 0 {
+				return true
+			}
 		}
 	}
 
@@ -802,6 +848,17 @@ func (c *Config) FieldStreamType(path compose.FieldPath, ns *schema2.NodeSchema,
 	return schema2.FieldNotStream, nil
 }
 
+func (c *Config) ChatHistoryEnabled() bool {
+	return c.ChatHistorySetting != nil && c.ChatHistorySetting.EnableChatHistory
+}
+
+func (c *Config) ChatHistoryRounds() int64 {
+	if c.ChatHistorySetting == nil {
+		return 0
+	}
+	return c.ChatHistorySetting.ChatHistoryRound
+}
+
 func toRetrievalSearchType(s int64) (knowledge.SearchType, error) {
 	switch s {
 	case 0:
@@ -811,15 +868,18 @@ func toRetrievalSearchType(s int64) (knowledge.SearchType, error) {
 	case 20:
 		return knowledge.SearchTypeFullText, nil
 	default:
-		return "", fmt.Errorf("invalid retrieval search type %v", s)
+		return 0, fmt.Errorf("invalid retrieval search type %v", s)
 	}
 }
 
 type LLM struct {
-	r                 compose.Runnable[map[string]any, map[string]any]
-	outputFormat      Format
-	requireCheckpoint bool
-	fullSources       map[string]*schema2.SourceInfo
+	r                  compose.Runnable[map[string]any, map[string]any]
+	outputFormat       Format
+	requireCheckpoint  bool
+	fullSources        map[string]*schema2.SourceInfo
+	chatHistorySetting *vo.ChatHistorySetting
+	nodeKey            vo.NodeKey
+	outputKey          string
 }
 
 const (
@@ -860,12 +920,12 @@ func jsonParse(ctx context.Context, data string, schema_ map[string]*vo.TypeInfo
 }
 
 type llmOptions struct {
-	toolWorkflowSW *schema.StreamWriter[*entity.Message]
+	toolWorkflowContainer *execute.StreamContainer
 }
 
-func WithToolWorkflowMessageWriter(sw *schema.StreamWriter[*entity.Message]) nodes.NodeOption {
+func WithToolWorkflowStreamContainer(container *execute.StreamContainer) nodes.NodeOption {
 	return nodes.WrapImplSpecificOptFn(func(o *llmOptions) {
-		o.toolWorkflowSW = sw
+		o.toolWorkflowContainer = container
 	})
 }
 
@@ -873,30 +933,29 @@ type llmState = map[string]any
 
 const agentModelName = "agent_model"
 
-func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeOption) (composeOpts []compose.Option, resumingEvent *entity.InterruptEvent, err error) {
+func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeOption) (
+	composeOpts []compose.Option, resumingEvent *entity.InterruptEvent, err error) {
 	c := execute.GetExeCtx(ctx)
 	if c != nil {
 		resumingEvent = c.NodeCtx.ResumingEvent
 	}
-	var previousToolES map[string]*entity.ToolInterruptEvent
 
 	if c != nil && c.RootCtx.ResumeEvent != nil {
 		// check if we are not resuming, but previously interrupted. Interrupt immediately.
 		if resumingEvent == nil {
-			err := compose.ProcessState(ctx, func(ctx context.Context, state ToolInterruptEventStore) error {
-				var e error
-				previousToolES, e = state.GetToolInterruptEvents(c.NodeKey)
-				if e != nil {
-					return e
-				}
+			var previouslyInterrupted bool
+			err = compose.ProcessState(ctx, func(ctx context.Context, state nodes.IntermediateResultStore) error {
+				previousToolES := state.GetIntermediateResult(c.NodeKey)
+				previouslyInterrupted = len(previousToolES) > 0
 				return nil
 			})
 			if err != nil {
-				return nil, nil, err
+				return
 			}
 
-			if len(previousToolES) > 0 {
-				return nil, nil, compose.InterruptAndRerun
+			if previouslyInterrupted {
+				err = compose.InterruptAndRerun
+				return
 			}
 		}
 	}
@@ -913,24 +972,24 @@ func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeO
 	if resumingEvent != nil {
 		var (
 			resumeData string
-			e          error
-			allIEs     = make(map[string]*entity.ToolInterruptEvent)
+			allIEs     map[string]int64
 		)
-		err = compose.ProcessState(ctx, func(ctx context.Context, state ToolInterruptEventStore) error {
-			allIEs, e = state.GetToolInterruptEvents(c.NodeKey)
-			if e != nil {
-				return e
+
+		_ = compose.ProcessState(ctx, func(_ context.Context, state nodes.IntermediateResultStore) error {
+			existingIEs := state.GetIntermediateResult(l.nodeKey)
+			allIEs = make(map[string]int64, len(existingIEs))
+			for toolCallID, exeID := range existingIEs {
+				allIEs[toolCallID] = exeID.(int64)
 			}
-
-			allIEs = maps.Clone(allIEs)
-
-			resumeData, e = state.ResumeToolInterruptEvent(c.NodeKey, resumingEvent.ToolInterruptEvent.ToolCallID)
-
-			return e
+			delete(existingIEs, resumingEvent.ToolInterruptEvent.ToolCallID)
+			state.SetIntermediateResult(l.nodeKey, existingIEs)
+			return nil
 		})
-		if err != nil {
-			return nil, nil, err
-		}
+		_ = compose.ProcessState(ctx, func(ctx context.Context, state nodes.InterruptEventStore) error {
+			resumeData, _ = state.GetAndClearResumeData(c.NodeKey)
+			return nil
+		})
+
 		composeOpts = append(composeOpts, compose.WithToolsNodeOption(
 			compose.WithToolOption(
 				execute.WithResume(&entity.ResumeRequest{
@@ -964,6 +1023,8 @@ func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeO
 					return ctx
 				}
 
+				c.RootCtx.ResumeEvent.Popped = true
+
 				return ctx
 			},
 		}).Handler()
@@ -977,30 +1038,16 @@ func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeO
 	}
 
 	llmOpts := nodes.GetImplSpecificOptions(&llmOptions{}, opts...)
-	if llmOpts.toolWorkflowSW != nil {
-		toolMsgOpt, toolMsgSR := execute.WithMessagePipe()
-		composeOpts = append(composeOpts, toolMsgOpt)
-
-		safego.Go(ctx, func() {
-			defer toolMsgSR.Close()
-			for {
-				msg, err := toolMsgSR.Recv()
-				if err != nil {
-					if err == io.EOF {
-						return
-					}
-					logs.CtxErrorf(ctx, "failed to receive message from tool workflow: %v", err)
-					return
-				}
-
-				logs.Infof("received message from tool workflow: %+v", msg)
-
-				llmOpts.toolWorkflowSW.Send(msg, nil)
-			}
-		})
+	if container := llmOpts.toolWorkflowContainer; container != nil {
+		composeOpts = append(composeOpts, compose.WithToolsNodeOption(compose.WithToolOption(
+			execute.WithParentStreamContainer(container))))
 	}
 
-	resolvedSources, err := nodes.ResolveStreamSources(ctx, l.fullSources)
+	var resolvedSources map[string]*schema2.SourceInfo
+	err = compose.ProcessState(ctx, func(_ context.Context, state nodes.DynamicStreamContainer) error {
+		resolvedSources = state.GetFullSources(l.nodeKey)
+		return nil
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1014,7 +1061,7 @@ func (l *LLM) prepare(ctx context.Context, _ map[string]any, opts ...nodes.NodeO
 	return composeOpts, resumingEvent, nil
 }
 
-func handleInterrupt(ctx context.Context, err error, resumingEvent *entity.InterruptEvent) error {
+func (l *LLM) handleInterrupt(ctx context.Context, err error, resumingEvent *entity.InterruptEvent) error {
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		return err
@@ -1068,7 +1115,7 @@ func handleInterrupt(ctx context.Context, err error, resumingEvent *entity.Inter
 		NodeKey:   c.NodeKey,
 		NodeType:  entity.NodeTypeLLM,
 		NodeTitle: c.NodeName,
-		NodeIcon:  entity.NodeMetaByNodeType(entity.NodeTypeLLM).IconURL,
+		NodeIcon:  entity.NodeMetaByNodeType(entity.NodeTypeLLM).IconURI,
 		EventType: entity.InterruptEventLLM,
 	}
 
@@ -1078,18 +1125,20 @@ func handleInterrupt(ctx context.Context, err error, resumingEvent *entity.Inter
 		ie.ToolInterruptEvent = toolIEs[0]
 	}
 
-	err = compose.ProcessState(ctx, func(ctx context.Context, ieStore ToolInterruptEventStore) error {
-		for i := range toolIEs {
-			e := ieStore.SetToolInterruptEvent(c.NodeKey, toolIEs[i].ToolCallID, toolIEs[i])
-			if e != nil {
-				return e
+	callID2ExeID := make(map[string]any, len(toolIEs))
+	for i := range toolIEs {
+		callID2ExeID[toolIEs[i].ToolCallID] = toolIEs[i].ExecuteID
+	}
+	_ = compose.ProcessState(ctx, func(ctx context.Context, state nodes.IntermediateResultStore) error {
+		previous := state.GetIntermediateResult(l.nodeKey)
+		for k, v := range previous {
+			if _, ok := callID2ExeID[k]; !ok {
+				callID2ExeID[k] = v
 			}
 		}
+		state.SetIntermediateResult(l.nodeKey, callID2ExeID)
 		return nil
 	})
-	if err != nil {
-		return err
-	}
 
 	return compose.NewInterruptAndRerunErr(ie)
 }
@@ -1102,7 +1151,7 @@ func (l *LLM) Invoke(ctx context.Context, in map[string]any, opts ...nodes.NodeO
 
 	out, err = l.r.Invoke(ctx, in, composeOpts...)
 	if err != nil {
-		err = handleInterrupt(ctx, err, resumingEvent)
+		err = l.handleInterrupt(ctx, err, resumingEvent)
 		return nil, err
 	}
 
@@ -1117,7 +1166,7 @@ func (l *LLM) Stream(ctx context.Context, in map[string]any, opts ...nodes.NodeO
 
 	out, err = l.r.Stream(ctx, in, composeOpts...)
 	if err != nil {
-		err = handleInterrupt(ctx, err, resumingEvent)
+		err = l.handleInterrupt(ctx, err, resumingEvent)
 		return nil, err
 	}
 
@@ -1156,28 +1205,28 @@ func injectKnowledgeTool(_ context.Context, g *compose.Graph[map[string]any, map
 			return make(map[string]any), nil
 		}
 
-		docs, err := cfg.Retriever.Retrieve(ctx, &knowledge.RetrieveRequest{
-			Query:             userPrompt,
-			KnowledgeIDs:      recallKnowledgeIDs,
-			RetrievalStrategy: cfg.RetrievalStrategy.RetrievalStrategy,
+		docs, err := crossknowledge.DefaultSVC().Retrieve(ctx, &knowledge.RetrieveRequest{
+			Query:        userPrompt,
+			KnowledgeIDs: recallKnowledgeIDs,
+			Strategy:     cfg.RetrievalStrategy.RetrievalStrategy,
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		if len(docs.Slices) == 0 && cfg.RetrievalStrategy.NoReCallReplyMode == NoReCallReplyModeOfDefault {
+		if len(docs.RetrieveSlices) == 0 && cfg.RetrievalStrategy.NoReCallReplyMode == NoReCallReplyModeOfDefault {
 			return make(map[string]any), nil
 		}
 
 		sb := strings.Builder{}
-		if len(docs.Slices) == 0 && cfg.RetrievalStrategy.NoReCallReplyMode == NoReCallReplyModeOfCustomize {
+		if len(docs.RetrieveSlices) == 0 && cfg.RetrievalStrategy.NoReCallReplyMode == NoReCallReplyModeOfCustomize {
 			sb.WriteString("recall slice 1: \n")
 			sb.WriteString(cfg.RetrievalStrategy.NoReCallReplyCustomizePrompt + "\n")
 		}
 
-		for idx, msg := range docs.Slices {
+		for idx, msg := range docs.RetrieveSlices {
 			sb.WriteString(fmt.Sprintf("recall slice %d:\n", idx+1))
-			sb.WriteString(fmt.Sprintf("%s\n", msg.Output))
+			sb.WriteString(fmt.Sprintf("%s\n", msg.Slice.GetSliceContent()))
 		}
 
 		output = map[string]any{
@@ -1192,10 +1241,67 @@ func injectKnowledgeTool(_ context.Context, g *compose.Graph[map[string]any, map
 	return nil
 }
 
-type ToolInterruptEventStore interface {
-	SetToolInterruptEvent(llmNodeKey vo.NodeKey, toolCallID string, ie *entity.ToolInterruptEvent) error
-	GetToolInterruptEvents(llmNodeKey vo.NodeKey) (map[string]*entity.ToolInterruptEvent, error)
-	ResumeToolInterruptEvent(llmNodeKey vo.NodeKey, toolCallID string) (string, error)
+func (l *LLM) ToCallbackInput(ctx context.Context, input map[string]any) (
+	*nodes.StructuredCallbackInput, error) {
+	if l.chatHistorySetting == nil || !l.chatHistorySetting.EnableChatHistory {
+		return &nodes.StructuredCallbackInput{Input: input}, nil
+	}
+
+	var messages []*crossmessage.WfMessage
+	var scMessages []*schema.Message
+	var sectionID *int64
+	execCtx := execute.GetExeCtx(ctx)
+	if execCtx != nil {
+		messages = execCtx.ExeCfg.ConversationHistory
+		scMessages = execCtx.ExeCfg.ConversationHistorySchemaMessages
+		sectionID = execCtx.ExeCfg.SectionID
+	}
+
+	ret := map[string]any{
+		"chatHistory": []any{},
+	}
+	maps.Copy(ret, input)
+
+	if len(messages) == 0 {
+		return &nodes.StructuredCallbackInput{Input: ret}, nil
+	}
+
+	if sectionID != nil && messages[0].SectionID != *sectionID {
+		return &nodes.StructuredCallbackInput{Input: ret}, nil
+	}
+
+	maxRounds := int(l.chatHistorySetting.ChatHistoryRound)
+	if execCtx != nil && execCtx.ExeCfg.MaxHistoryRounds != nil {
+		maxRounds = min(int(*execCtx.ExeCfg.MaxHistoryRounds), maxRounds)
+	}
+	count := 0
+	startIdx := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == schema.User {
+			count++
+		}
+		if count >= maxRounds {
+			startIdx = i
+			break
+		}
+	}
+
+	var historyMessages []any
+	for _, msg := range messages[startIdx:] {
+		content, err := nodes.ConvertMessageToString(ctx, msg)
+		if err != nil {
+			logs.CtxWarnf(ctx, "failed to convert message to string: %v", err)
+			continue
+		}
+		historyMessages = append(historyMessages, map[string]any{
+			"role":    string(msg.Role),
+			"content": content,
+		})
+	}
+	ctxcache.Store(ctx, chatHistoryKey, scMessages[startIdx:])
+
+	ret["chatHistory"] = historyMessages
+	return &nodes.StructuredCallbackInput{Input: ret}, nil
 }
 
 func (l *LLM) ToCallbackOutput(ctx context.Context, output map[string]any) (*nodes.StructuredCallbackOutput, error) {
@@ -1203,30 +1309,44 @@ func (l *LLM) ToCallbackOutput(ctx context.Context, output map[string]any) (*nod
 	if c == nil {
 		return &nodes.StructuredCallbackOutput{
 			Output:    output,
-			RawOutput: output,
+			RawOutput: ptr.Of(output[l.outputKey].(string)),
 		}, nil
 	}
 	rawOutputK := fmt.Sprintf(rawOutputKey, c.NodeKey)
 	warningK := fmt.Sprintf(warningKey, c.NodeKey)
 	rawOutput, found := ctxcache.Get[string](ctx, rawOutputK)
 	if !found {
-		return &nodes.StructuredCallbackOutput{
-			Output:    output,
-			RawOutput: output,
-		}, nil
+		structuredOut := &nodes.StructuredCallbackOutput{
+			Output: output,
+		}
+
+		if _, ok := output[l.outputKey]; ok {
+			structuredOut.RawOutput = ptr.Of(output[l.outputKey].(string))
+		}
+
+		return structuredOut, nil
 	}
 
 	warning, found := ctxcache.Get[vo.WorkflowError](ctx, warningK)
 	if !found {
 		return &nodes.StructuredCallbackOutput{
 			Output:    output,
-			RawOutput: map[string]any{"output": rawOutput},
+			RawOutput: ptr.Of(rawOutput),
 		}, nil
 	}
 
-	return &nodes.StructuredCallbackOutput{
+	structuredOut := &nodes.StructuredCallbackOutput{
 		Output:    output,
-		RawOutput: map[string]any{"output": rawOutput},
+		RawOutput: ptr.Of(rawOutput),
 		Error:     warning,
-	}, nil
+	}
+
+	reasoning, ok := output[ReasoningOutputKey]
+	if ok {
+		structuredOut.Extra = map[string]any{
+			ReasoningOutputKey: reasoning,
+		}
+	}
+
+	return structuredOut, nil
 }

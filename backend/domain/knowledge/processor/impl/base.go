@@ -29,13 +29,13 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/internal/dal/model"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/internal/events"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/repository"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document/parser"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/eventbus"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/idgen"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/rdb"
-	rdbEntity "github.com/coze-dev/coze-studio/backend/infra/contract/rdb/entity"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/document"
+	"github.com/coze-dev/coze-studio/backend/infra/document/parser"
+	"github.com/coze-dev/coze-studio/backend/infra/eventbus"
+	"github.com/coze-dev/coze-studio/backend/infra/idgen"
+	"github.com/coze-dev/coze-studio/backend/infra/rdb"
+	rdbEntity "github.com/coze-dev/coze-studio/backend/infra/rdb/entity"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/errno"
@@ -49,8 +49,9 @@ type baseDocProcessor struct {
 	documentSource *entity.DocumentSource
 
 	// Drop DB model
-	TableName string
-	docModels []*model.KnowledgeDocument
+	TableName   string
+	docModels   []*model.KnowledgeDocument
+	imageSlices []*model.KnowledgeDocumentSlice
 
 	storage       storage.Storage
 	knowledgeRepo repository.KnowledgeRepo
@@ -69,14 +70,14 @@ func (p *baseDocProcessor) BeforeCreate() error {
 
 func (p *baseDocProcessor) BuildDBModel() error {
 	p.docModels = make([]*model.KnowledgeDocument, 0, len(p.Documents))
-	ids, err := p.idgen.GenMultiIDs(p.ctx, len(p.Documents))
-	if err != nil {
-		logs.CtxErrorf(p.ctx, "gen ids failed, err: %v", err)
-		return errorx.New(errno.ErrKnowledgeIDGenCode)
-	}
 	for i := range p.Documents {
+		id, err := p.idgen.GenID(p.ctx)
+		if err != nil {
+			logs.CtxErrorf(p.ctx, "gen id failed, err: %v", err)
+			return errorx.New(errno.ErrKnowledgeIDGenCode)
+		}
 		docModel := &model.KnowledgeDocument{
-			ID:            ids[i],
+			ID:            id,
 			KnowledgeID:   p.Documents[i].KnowledgeID,
 			Name:          p.Documents[i].Name,
 			FileExtension: string(p.Documents[i].FileExtension),
@@ -95,6 +96,23 @@ func (p *baseDocProcessor) BuildDBModel() error {
 		}
 		p.Documents[i].ID = docModel.ID
 		p.docModels = append(p.docModels, docModel)
+		if p.Documents[i].Type == knowledge.DocumentTypeImage {
+			id, err := p.idgen.GenID(p.ctx)
+			if err != nil {
+				logs.CtxErrorf(p.ctx, "gen id failed, err: %v", err)
+				return errorx.New(errno.ErrKnowledgeIDGenCode)
+			}
+			p.imageSlices = append(p.imageSlices, &model.KnowledgeDocumentSlice{
+				ID:          id,
+				KnowledgeID: p.Documents[i].KnowledgeID,
+				DocumentID:  p.Documents[i].ID,
+				CreatedAt:   time.Now().UnixMilli(),
+				UpdatedAt:   time.Now().UnixMilli(),
+				CreatorID:   p.UserID,
+				SpaceID:     p.SpaceID,
+				Status:      int32(knowledge.SliceStatusInit),
+			})
+		}
 	}
 
 	return nil
@@ -140,6 +158,11 @@ func (p *baseDocProcessor) InsertDBModel() (err error) {
 	err = p.documentRepo.CreateWithTx(ctx, tx, p.docModels)
 	if err != nil {
 		logs.CtxErrorf(ctx, "create document failed, err: %v", err)
+		return errorx.New(errno.ErrKnowledgeDBCode, errorx.KV("msg", err.Error()))
+	}
+	err = p.sliceRepo.BatchCreateWithTX(ctx, tx, p.imageSlices)
+	if err != nil {
+		logs.CtxErrorf(ctx, "update knowledge failed, err: %v", err)
 		return errorx.New(errno.ErrKnowledgeDBCode, errorx.KV("msg", err.Error()))
 	}
 	err = p.knowledgeRepo.UpdateWithTx(ctx, tx, p.Documents[0].KnowledgeID, map[string]interface{}{

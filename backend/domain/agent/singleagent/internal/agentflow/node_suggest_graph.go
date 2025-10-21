@@ -24,7 +24,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/chatmodel"
+	"github.com/coze-dev/coze-studio/backend/infra/chatmodel"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 )
 
@@ -56,6 +56,7 @@ func newSuggestGraph(_ context.Context, conf *Config, chatModel chatmodel.ToolCa
 	}
 	suggestPrompt := prompt.FromMessages(schema.Jinja2,
 		schema.SystemMessage(SUGGESTION_PROMPT_JINJA2),
+		schema.UserMessage("Based on the contextual information, provide three recommended questions"),
 	)
 
 	suggestGraph := compose.NewGraph[[]*schema.Message, *schema.Message]()

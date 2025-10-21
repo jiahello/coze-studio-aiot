@@ -28,11 +28,12 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
 	crossplugin "github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin"
+	"github.com/coze-dev/coze-studio/backend/crossdomain/contract/plugin/model"
 	"github.com/coze-dev/coze-studio/backend/domain/agent/singleagent/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/agent/singleagent/internal/agentflow"
 	"github.com/coze-dev/coze-studio/backend/domain/agent/singleagent/repository"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/chatmodel"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/modelmgr"
+	"github.com/coze-dev/coze-studio/backend/infra/chatmodel"
+	"github.com/coze-dev/coze-studio/backend/infra/modelmgr"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/pkg/jsoncache"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/slices"
@@ -111,6 +112,10 @@ func (s *singleAgentImpl) StreamExecute(ctx context.Context, req *entity.Execute
 		ModelMgr:     s.ModelMgr,
 		ModelFactory: s.ModelFactory,
 		CPStore:      s.CPStore,
+
+		CustomVariables: req.CustomVariables,
+
+		ConversationID: req.ConversationID,
 	}
 	rn, err := agentflow.BuildAgent(ctx, conf)
 	if err != nil {
@@ -144,16 +149,19 @@ func (s *singleAgentImpl) GetSingleAgent(ctx context.Context, agentID int64, ver
 
 func (s *singleAgentImpl) UpdateSingleAgentDraft(ctx context.Context, agentInfo *entity.SingleAgent) (err error) {
 	if agentInfo.Plugin != nil {
-		toolIDs := slices.Transform(agentInfo.Plugin, func(item *bot_common.PluginInfo) int64 {
-			return item.GetApiId()
-		})
-		err = crossplugin.DefaultSVC().BindAgentTools(ctx, agentInfo.AgentID, toolIDs)
+		err = crossplugin.DefaultSVC().BindAgentTools(ctx, agentInfo.AgentID, slices.Transform(agentInfo.Plugin, func(item *bot_common.PluginInfo) *model.BindToolInfo {
+			return &model.BindToolInfo{
+				ToolID:   item.GetApiId(),
+				PluginID: item.GetPluginId(),
+				Source:   item.PluginFrom,
+			}
+		}))
 		if err != nil {
 			return fmt.Errorf("bind agent tools failed, err=%v", err)
 		}
 	}
 
-	return s.AgentDraftRepo.Update(ctx, agentInfo)
+	return s.AgentDraftRepo.Save(ctx, agentInfo)
 }
 
 func (s *singleAgentImpl) CreateSingleAgentDraftWithID(ctx context.Context, creatorID, agentID int64, draft *entity.SingleAgent) (int64, error) {

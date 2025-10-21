@@ -24,8 +24,8 @@ import (
 	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/knowledge"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/knowledge/internal/dal/model"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/chatmodel"
-	"github.com/coze-dev/coze-studio/backend/infra/contract/document"
+	"github.com/coze-dev/coze-studio/backend/infra/chatmodel"
+	"github.com/coze-dev/coze-studio/backend/infra/document"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/sets"
 )
 
@@ -217,9 +217,10 @@ type RetrieveContext struct {
 }
 
 type KnowledgeInfo struct {
-	DocumentIDs  []int64
-	DocumentType knowledge.DocumentType
-	TableColumns []*entity.TableColumn
+	KnowledgeName string
+	DocumentIDs   []int64
+	DocumentType  knowledge.DocumentType
+	TableColumns  []*entity.TableColumn
 }
 type AlterTableSchemaRequest struct {
 	DocumentID       int64

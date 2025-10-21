@@ -101,6 +101,7 @@ struct PluginDetal {
     5: optional i64    plugin_type (agw.js_conv="str" api.js_conv="true")
     6: optional i64    plugin_status (agw.js_conv="str" api.js_conv="true")
     7: optional bool   is_official
+    9: optional bot_common.PluginFrom plugin_from // 
 }
 
 struct PluginAPIDetal {
@@ -447,13 +448,6 @@ struct GetFileUrlsResponse {
     255: base.BaseResp BaseResp
 }
 
-struct File{
-    1: string URI (api.body = "uri"),                  // File URI
-    2: i64 Bytes (api.body = "bytes"),               // file bytes
-    3: i64 CreatedAt (agw.key = "created_at"),        // Upload timestamp in s
-    4: string FileName (api.body = "file_name"),     // file name
-    5: string URL (api.body = "url")
-}
 
 
 service PlaygroundService {

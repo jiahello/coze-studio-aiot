@@ -23,7 +23,8 @@ import (
 
 	"github.com/cloudwego/eino/compose"
 
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/plugin"
+	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
+	workflowModel "github.com/coze-dev/coze-studio/backend/api/model/crossdomain/workflow"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/canvas/convert"
@@ -40,6 +41,7 @@ type Config struct {
 	PluginID      int64
 	ToolID        int64
 	PluginVersion string
+	PluginFrom    *bot_common.PluginFrom
 }
 
 func (c *Config) Adapt(ctx context.Context, n *vo.Node, opts ...nodes.AdaptOption) (*schema.NodeSchema, error) {
@@ -63,6 +65,7 @@ func (c *Config) Adapt(ctx context.Context, n *vo.Node, opts ...nodes.AdaptOptio
 	pID, err := strconv.ParseInt(ps.Input.Value.Content.(string), 10, 64)
 
 	c.PluginID = pID
+	c.PluginFrom = inputs.PluginFrom
 
 	ps, ok = apiParams["apiID"]
 	if !ok {
@@ -100,7 +103,7 @@ func (c *Config) Build(_ context.Context, _ *schema.NodeSchema, _ ...schema.Buil
 		pluginID:      c.PluginID,
 		toolID:        c.ToolID,
 		pluginVersion: c.PluginVersion,
-		pluginService: plugin.GetPluginService(),
+		pluginFrom:    c.PluginFrom,
 	}, nil
 }
 
@@ -108,18 +111,18 @@ type Plugin struct {
 	pluginID      int64
 	toolID        int64
 	pluginVersion string
-
-	pluginService plugin.Service
+	pluginFrom    *bot_common.PluginFrom
 }
 
 func (p *Plugin) Invoke(ctx context.Context, parameters map[string]any) (ret map[string]any, err error) {
-	var exeCfg vo.ExecuteConfig
+	var exeCfg workflowModel.ExecuteConfig
 	if ctxExeCfg := execute.GetExeCtx(ctx); ctxExeCfg != nil {
 		exeCfg = ctxExeCfg.ExeCfg
 	}
-	result, err := p.pluginService.ExecutePlugin(ctx, parameters, &vo.PluginEntity{
+	result, err := ExecutePlugin(ctx, parameters, &vo.PluginEntity{
 		PluginID:      p.pluginID,
 		PluginVersion: ptr.Of(p.pluginVersion),
+		PluginFrom:    p.pluginFrom,
 	}, p.toolID, exeCfg)
 	if err != nil {
 		if extra, ok := compose.IsInterruptRerunError(err); ok {

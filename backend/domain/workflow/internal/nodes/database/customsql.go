@@ -21,10 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
-	"strings"
 
-	"github.com/coze-dev/coze-studio/backend/domain/workflow/crossdomain/database"
+	"github.com/coze-dev/coze-studio/backend/api/model/crossdomain/database"
+	crossdatabase "github.com/coze-dev/coze-studio/backend/crossdomain/contract/database"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/canvas/convert"
@@ -32,6 +33,8 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/workflow/internal/schema"
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
+
+var singleQuotesStringRegexp = regexp.MustCompile("[`']\\{\\{([a-zA-Z_][a-zA-Z0-9_]*(?:\\.\\w+|\\[\\d+\\])*)+\\}\\}[`']")
 
 type CustomSQLConfig struct {
 	DatabaseInfoID int64
@@ -85,18 +88,16 @@ func (c *CustomSQLConfig) Build(_ context.Context, ns *schema.NodeSchema, _ ...s
 	}
 
 	return &CustomSQL{
-		databaseInfoID:    c.DatabaseInfoID,
-		sqlTemplate:       c.SQLTemplate,
-		outputTypes:       ns.OutputTypes,
-		customSQLExecutor: database.GetDatabaseOperator(),
+		databaseInfoID: c.DatabaseInfoID,
+		sqlTemplate:    c.SQLTemplate,
+		outputTypes:    ns.OutputTypes,
 	}, nil
 }
 
 type CustomSQL struct {
-	databaseInfoID    int64
-	sqlTemplate       string
-	outputTypes       map[string]*vo.TypeInfo
-	customSQLExecutor database.DatabaseOperator
+	databaseInfoID int64
+	sqlTemplate    string
+	outputTypes    map[string]*vo.TypeInfo
 }
 
 func (c *CustomSQL) Invoke(ctx context.Context, input map[string]any) (map[string]any, error) {
@@ -112,50 +113,63 @@ func (c *CustomSQL) Invoke(ctx context.Context, input map[string]any) (map[strin
 		return nil, err
 	}
 
+	templateParts := nodes.ParseTemplate(singleQuotesStringRegexp.ReplaceAllString(c.sqlTemplate, "?"))
 	templateSQL := ""
-	templateParts := nodes.ParseTemplate(c.sqlTemplate)
-	sqlParams := make([]database.SQLParam, 0, len(templateParts))
-	var nilError = errors.New("field is nil")
-	for _, templatePart := range templateParts {
-		if !templatePart.IsVariable {
-			templateSQL += templatePart.Value
-			continue
-		}
-
-		templateSQL += "?"
-		val, err := templatePart.Render(inputBytes, nodes.WithNilRender(func() (string, error) {
-			return "", nilError
-		}),
-			nodes.WithCustomRender(reflect.TypeOf(false), func(val any) (string, error) {
-				b := val.(bool)
-				if b {
-					return "1", nil
-				}
-				return "0", nil
-			}))
-
-		if err != nil {
-			if !errors.Is(err, nilError) {
-				return nil, err
-			}
-			sqlParams = append(sqlParams, database.SQLParam{
-				IsNull: true,
-			})
+	if len(templateParts) > 0 {
+		if len(templateParts) == 0 {
+			templateSQL = templateParts[0].Value
 		} else {
-			sqlParams = append(sqlParams, database.SQLParam{
-				Value:  val,
-				IsNull: false,
-			})
+			for _, templatePart := range templateParts {
+				if !templatePart.IsVariable {
+					templateSQL += templatePart.Value
+					continue
+				}
+
+				val, err := templatePart.Render(inputBytes, nodes.WithCustomRender(reflect.TypeOf(false), func(val any) (string, error) {
+					b := val.(bool)
+					if b {
+						return "1", nil
+					}
+					return "0", nil
+				}))
+				if err != nil {
+					return nil, err
+				}
+				templateSQL += val
+
+			}
 		}
 
+	} else {
+		return nil, fmt.Errorf("parse template invalid")
 	}
 
-	// replace sql template '?' to ?
-	templateSQL = strings.Replace(templateSQL, "'?'", "?", -1)
-	templateSQL = strings.Replace(templateSQL, "`?`", "?", -1)
+	sqlParamStrings := singleQuotesStringRegexp.FindAllString(c.sqlTemplate, -1)
+	sqlParams := make([]database.SQLParam, 0, len(sqlParamStrings))
+	for _, s := range sqlParamStrings {
+		parts := nodes.ParseTemplate(s)
+		for _, part := range parts {
+			if part.IsVariable {
+				val, err := part.Render(inputBytes, nodes.WithCustomRender(reflect.TypeOf(false), func(val any) (string, error) {
+					b := val.(bool)
+					if b {
+						return "1", nil
+					}
+					return "0", nil
+				}))
+				if err != nil {
+					return nil, err
+				}
+				sqlParams = append(sqlParams, database.SQLParam{
+					Value: val,
+				})
+			}
+		}
+	}
+
 	req.SQL = templateSQL
 	req.Params = sqlParams
-	response, err := c.customSQLExecutor.Execute(ctx, req)
+	response, err := crossdatabase.DefaultSVC().Execute(ctx, req)
 	if err != nil {
 		return nil, err
 	}
